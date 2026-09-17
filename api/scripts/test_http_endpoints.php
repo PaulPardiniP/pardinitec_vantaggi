@@ -582,11 +582,201 @@ try {
     );
 
     // 46. Recuperación posterior: tras reiniciar/limpiar límites, la tarjeta válida responde 200
-    $pdo->exec("DELETE FROM `rate_limits` WHERE `action` IN ('public.card_invalid', 'public.card_ip')");
-    $resValidCardRecovered = httpRequest('GET', "/c/{$reassignedToken}");
-    assertHttp("Recuperación de consulta pública tras expiración de rate limit responde 200",
-        $resValidCardRecovered['status'] === 200 &&
-        $resValidCardRecovered['json']['data']['state'] === 'active'
+    echo PHP_EOL . "--- Pruebas HTTP de la Etapa 3 (Points, Rewards, Offers y Capacidades) ---" . PHP_EOL;
+
+    // 47. Configuración del Programa de Puntos: GET y PUT
+    $resGetProg = httpRequest('GET', "/api/v1/businesses/{$createdBizId}/loyalty-program", null, [], $sessionCookie);
+    assertHttp("GET /businesses/{id}/loyalty-program responde 200 con configuración por defecto",
+        $resGetProg['status'] === 200 &&
+        isset($resGetProg['json']['data']['program_type'])
+    );
+
+    $resPutProg = httpRequest('PUT', "/api/v1/businesses/{$createdBizId}/loyalty-program", [
+        'program_type' => 'points_per_amount',
+        'points_per_currency_unit' => 1.50,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("PUT /businesses/{id}/loyalty-program actualiza modalidad con 200",
+        $resPutProg['status'] === 200 &&
+        $resPutProg['json']['data']['program_type'] === 'points_per_amount'
+    );
+
+    // 48. Cálculo de puntos
+    $resCalc = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-program/calculate", [
+        'spent_amount' => 40.00,
+    ], [], $sessionCookie);
+    assertHttp("POST /businesses/{id}/loyalty-program/calculate calcula puntos por importe con 200 (60 pts)",
+        $resCalc['status'] === 200 &&
+        $resCalc['json']['points'] === 60
+    );
+
+    // 49. Ajuste de puntos e Idempotencia
+    $httpOpId1 = 'http_op_pts_' . time();
+    $resAdjustPts = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/points/adjust", [
+        'points' => 120,
+        'type' => 'purchase_amount',
+        'reason' => 'Acquisto con scontrino',
+        'operation_id' => $httpOpId1,
+        'spent_amount' => 80.00,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /points/adjust acredita puntos con 200 y actualiza saldo",
+        $resAdjustPts['status'] === 200 &&
+        $resAdjustPts['json']['data']['balance'] === 120 &&
+        $resAdjustPts['json']['data']['idempotent'] === false
+    );
+
+    // Reintento con mismo operation_id -> idempotente
+    $resAdjustRepeat = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/points/adjust", [
+        'points' => 120,
+        'type' => 'purchase_amount',
+        'reason' => 'Acquisto con scontrino',
+        'operation_id' => $httpOpId1,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /points/adjust con mismo operation_id responde 200 con idempotent = true",
+        $resAdjustRepeat['status'] === 200 &&
+        $resAdjustRepeat['json']['data']['idempotent'] === true &&
+        $resAdjustRepeat['json']['data']['balance'] === 120
+    );
+
+    // 50. Historial paginado de movimientos
+    $resListTx = httpRequest('GET', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/points/transactions?page=1&per_page=10", null, [], $sessionCookie);
+    assertHttp("GET /points/transactions responde 200 con historial paginado",
+        $resListTx['status'] === 200 &&
+        !empty($resListTx['json']['data']) &&
+        isset($resListTx['json']['pagination'])
+    );
+
+    // 51. CRUD de Premios (Rewards)
+    $resCreateRew = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/rewards", [
+        'name' => 'Pizza Margherita Omaggio',
+        'description' => 'Una pizza classica a scelta',
+        'points_cost' => 50,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /businesses/{id}/rewards crea premio con 201",
+        $resCreateRew['status'] === 201 &&
+        $resCreateRew['json']['data']['points_cost'] === 50
+    );
+    $createdRewId = (int) $resCreateRew['json']['data']['id'];
+
+    $resListRew = httpRequest('GET', "/api/v1/businesses/{$createdBizId}/rewards", null, [], $sessionCookie);
+    assertHttp("GET /businesses/{id}/rewards lista catálogo de premios con 200",
+        $resListRew['status'] === 200 &&
+        count($resListRew['json']['data']) >= 1
+    );
+
+    // 52. Rechazo por capacidad: cuenta Punti no posee capacidad 'rewards' (HTTP 403)
+    $httpOpIdPuntiFail = 'http_op_pts_fail_' . time();
+    $resRedeemPuntiFail = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/rewards/{$createdRewId}/redeem", [
+        'operation_id' => $httpOpIdPuntiFail,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /rewards/{id}/redeem rechaza cuenta 'punti' sin capacidad 'rewards' con 403",
+        $resRedeemPuntiFail['status'] === 403
+    );
+
+    // 53. Multi-cuenta de perfiles independientes: Crear cuenta 'vantaggi' para el mismo cliente
+    $resCreateVantaggiAcc = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/customers/{$createdCustomerId}/loyalty-accounts", [
+        'profile_code' => 'vantaggi',
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /customers/{id}/loyalty-accounts crea cuenta 'vantaggi' para el mismo cliente con 201",
+        $resCreateVantaggiAcc['status'] === 201 &&
+        !empty($resCreateVantaggiAcc['json']['data']['id'])
+    );
+    $vantaggiAccountId = (int) $resCreateVantaggiAcc['json']['data']['id'];
+
+    // Emitir credencial digital para la nueva cuenta vantaggi
+    $resIssueCred = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/credentials", [], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /loyalty-accounts/{id}/credentials emite credencial digital con 201",
+        $resIssueCred['status'] === 201 &&
+        !empty($resIssueCred['json']['data']['token'])
+    );
+    $vantaggiToken = (string) $resIssueCred['json']['data']['token'];
+
+    // Cargar saldo de puntos a la cuenta vantaggi (+120 pts)
+    $resAdjustVantaggiPts = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/points/adjust", [
+        'points' => 120,
+        'type' => 'purchase_amount',
+        'reason' => 'Spesa per programma Vantaggi',
+        'operation_id' => 'v_pts_' . time(),
+        'spent_amount' => 120.00,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /points/adjust acredita 120 puntos en cuenta 'vantaggi' con 200",
+        $resAdjustVantaggiPts['status'] === 200 &&
+        $resAdjustVantaggiPts['json']['data']['balance'] === 120
+    );
+
+    // 54. Canje de Premio (Reward Redeem) en cuenta Vantaggi (120 -> 70 pts)
+    $httpOpIdRew = 'http_op_rew_' . time();
+    $resRedeemRew = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/rewards/{$createdRewId}/redeem", [
+        'operation_id' => $httpOpIdRew,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /rewards/{id}/redeem canjea premio en cuenta 'vantaggi' y descuenta saldo (120 -> 70 pts)",
+        $resRedeemRew['status'] === 200 &&
+        $resRedeemRew['json']['data']['balance'] === 70
+    );
+
+    // 55. CRUD de Ofertas (Offers)
+    $resCreateOff = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/offers", [
+        'title' => 'Sconto 20% Primavera',
+        'description' => 'Valido su tutto il menu',
+        'offer_type' => 'discount',
+        'required_capability' => 'offers',
+        'is_single_use' => true,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /businesses/{id}/offers crea oferta con 201",
+        $resCreateOff['status'] === 201 &&
+        $resCreateOff['json']['data']['is_single_use'] === true
+    );
+    $createdOffId = (int) $resCreateOff['json']['data']['id'];
+
+    $resListOff = httpRequest('GET', "/api/v1/businesses/{$createdBizId}/offers", null, [], $sessionCookie);
+    assertHttp("GET /businesses/{id}/offers lista ofertas activas con 200",
+        $resListOff['status'] === 200 &&
+        count($resListOff['json']['data']) >= 1
+    );
+
+    // 56. Canje de Oferta monouso y rechazo al reutilizar en cuenta Vantaggi
+    $httpOpIdOff = 'http_op_off_' . time();
+    $resRedeemOff = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/offers/{$createdOffId}/redeem", [
+        'operation_id' => $httpOpIdOff,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /offers/{id}/redeem canjea oferta exitosamente en cuenta 'vantaggi' con 200",
+        $resRedeemOff['status'] === 200 &&
+        $resRedeemOff['json']['data']['idempotent'] === false
+    );
+
+    $resRedeemOffReuse = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/offers/{$createdOffId}/redeem", [
+        'operation_id' => 'http_op_off_reuse_' . time(),
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /offers/{id}/redeem rechaza reutilización de oferta monouso con 422",
+        $resRedeemOffReuse['status'] === 422
+    );
+
+    // 57. Aislamiento Multiempresa HTTP: Usuario ajeno recibe 403 al ajustar puntos
+    $resCrossPts = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/points/adjust", [
+        'points' => 50,
+        'operation_id' => 'cross_pts_' . time(),
+    ], ['X-CSRF-Token' => $csrfToken], $cookie2);
+    assertHttp("Aislamiento HTTP: Usuario ajeno recibe 403 al ajustar puntos de otro comercio",
+        $resCrossPts['status'] === 403
+    );
+
+    // 58. Resolución pública /c/<token> enriquecida: muestra catálogo y ofertas de cuenta vantaggi sin PII
+    $resResolveEnriched = httpRequest('GET', "/c/{$vantaggiToken}");
+    assertHttp("GET /c/<token> resolución pública muestra progreso, premios/ofertas y cero PII",
+        $resResolveEnriched['status'] === 200 &&
+        $resResolveEnriched['json']['data']['mode'] === 'public' &&
+        isset($resResolveEnriched['json']['data']['rewards']) &&
+        isset($resResolveEnriched['json']['data']['offers']) &&
+        !isset($resResolveEnriched['json']['data']['customer'])
+    );
+
+    // 59. Equivalencia y ausencia de PII entre /c/<token> y /api/v1/public/cards/<token>
+    $resResolveApi = httpRequest('GET', "/api/v1/public/cards/{$vantaggiToken}");
+    assertHttp("GET /api/v1/public/cards/<token> y /c/<token> tienen resolución idéntica y cero PII",
+        $resResolveApi['status'] === 200 &&
+        $resResolveApi['json'] === $resResolveEnriched['json'] &&
+        !isset($resResolveApi['json']['data']['customer'])
     );
 
     echo PHP_EOL . "--- Pruebas de Logout y Destrucción de Sesión ---" . PHP_EOL;

@@ -153,9 +153,15 @@ assertBiz("Staff tiene autorización de lectura del comercio (business.view)", $
 // 4.7 Verificación de permisos formales con notación de punto
 assertBiz("Staff tiene permiso points.adjust", Permission::can(Role::STAFF, Permission::POINTS_ADJUST));
 assertBiz("Staff tiene permiso reward.redeem", Permission::can(Role::STAFF, Permission::REWARD_REDEEM));
+assertBiz("Staff tiene permiso offer.redeem", Permission::can(Role::STAFF, Permission::OFFER_REDEEM));
+assertBiz("Staff NO tiene permiso offer.manage", !Permission::can(Role::STAFF, Permission::OFFER_MANAGE));
 assertBiz("Staff NO tiene permiso settings.manage", !Permission::can(Role::STAFF, Permission::SETTINGS_MANAGE));
+assertBiz("Manager tiene permiso offer.manage", Permission::can(Role::MANAGER, Permission::OFFER_MANAGE));
+assertBiz("Manager tiene permiso offer.redeem", Permission::can(Role::MANAGER, Permission::OFFER_REDEEM));
 assertBiz("Owner tiene permiso settings.manage", Permission::can(Role::OWNER, Permission::SETTINGS_MANAGE));
 assertBiz("Owner tiene permiso user.manage", Permission::can(Role::OWNER, Permission::USER_MANAGE));
+assertBiz("Owner tiene permiso offer.manage", Permission::can(Role::OWNER, Permission::OFFER_MANAGE));
+assertBiz("Owner tiene permiso offer.redeem", Permission::can(Role::OWNER, Permission::OFFER_REDEEM));
 
 // 5. Eliminación de Miembros y Protección del Único Propietario
 echo PHP_EOL . "--- 5. Reglas de Eliminación y Protección ---" . PHP_EOL;

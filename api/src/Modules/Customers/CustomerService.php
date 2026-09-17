@@ -159,7 +159,7 @@ final class CustomerService
         $input = $this->validateCustomerInput($data);
 
         // 3. Resolver perfil de fidelización (por defecto 'punti')
-        $profileCode = trim((string) ($data['card_profile_code'] ?? 'punti'));
+        $profileCode = trim((string) ($data['card_profile_code'] ?? $data['card_profile'] ?? 'punti'));
         $profile = $this->loyaltyService->getProfileByCode($profileCode);
         if (!$profile) {
             throw new InvalidArgumentException("Perfil de fidelización inválido o inactivo: '{$profileCode}'.");

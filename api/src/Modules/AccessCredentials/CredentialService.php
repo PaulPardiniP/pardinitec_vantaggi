@@ -373,10 +373,11 @@ final class CredentialService
             SELECT ac.`id` AS `credential_id`, ac.`type` AS `credential_type`, ac.`status` AS `credential_status`,
                    ac.`card_id`, ac.`issued_at`,
                    c.`status` AS `card_status`, c.`design_profile_id`, c.`business_id` AS `card_business_id`,
-                   la.`id` AS `loyalty_account_id`, la.`balance`, la.`status` AS `account_status`,
-                   la.`customer_id`,
+                    la.`id` AS `loyalty_account_id`, la.`card_profile_id`, la.`balance`, la.`status` AS `account_status`,
+                    la.`customer_id`,
                    cust.`first_name` AS `customer_first_name`, cust.`last_name` AS `customer_last_name`,
                    cust.`phone` AS `customer_phone`, cust.`email` AS `customer_email`,
+                   cust.`business_id` AS `customer_business_id`,
                    cp.`code` AS `profile_code`, cp.`name` AS `profile_name`,
                    b.`id` AS `business_id`, b.`name` AS `business_name`, b.`slug` AS `business_slug`
             FROM `access_credentials` ac
@@ -472,6 +473,49 @@ final class CredentialService
 
         // 5. Credencial y tarjeta ACTIVAS
         $bizId = (int) ($row['business_id'] ?? 0);
+        $cardProfileId = (int) ($row['card_profile_id'] ?? 0);
+        $accountId = (int) ($row['loyalty_account_id'] ?? 0);
+        $profileCode = (string) ($row['profile_code'] ?? '');
+
+        // Cargar servicios para enriquecer la vista según capacidades activas
+        $capabilityService = new \App\Modules\Loyalty\CapabilityService($this->pdo);
+        $rewardService = new \App\Modules\Rewards\RewardService($this->pdo, $capabilityService);
+        $offerService = new \App\Modules\Offers\OfferService($this->pdo, $capabilityService);
+        $pointsService = new \App\Modules\Points\PointsService($this->pdo, $capabilityService);
+        $programService = new \App\Modules\Points\LoyaltyProgramService($this->pdo);
+
+        $hasPoints = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'points')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'points');
+        $hasRewards = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'rewards')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'rewards');
+        $hasOffers = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'offers')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers');
+        $hasVipOffers = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'vip_offers')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers');
+
+        // Premios, progreso y ofertas permitidas para el perfil
+        $availableRewards = $hasRewards ? $rewardService->listRewards($bizId, true, $cardProfileId) : [];
+        $nextReward = $hasRewards ? $rewardService->getNextAvailableReward($bizId, (int) $row['balance'], $cardProfileId) : null;
+        $availableOffers = ($hasOffers || $hasVipOffers) ? $offerService->listOffers($bizId, true, $cardProfileId) : [];
+
+        $loyaltyAccountData = [
+            'id' => $accountId,
+            'profile_code' => $profileCode,
+            'profile_name' => (string) $row['profile_name'],
+            'status' => (string) $row['account_status'],
+        ];
+        if ($hasPoints) {
+            $loyaltyAccountData['balance'] = (int) $row['balance'];
+        }
+
+        // Garantizar aislamiento estricto: Si el cliente perteneciera a otro business, denegar sus datos
+        if ($row['customer_id'] !== null && $row['customer_business_id'] !== null && (int) $row['customer_business_id'] !== $bizId) {
+            $row['customer_id'] = null;
+            $row['customer_first_name'] = null;
+            $row['customer_last_name'] = null;
+            $row['customer_phone'] = null;
+            $row['customer_email'] = null;
+        }
 
         // Comprobación de observador autenticado
         if ($authenticatedViewer !== null) {
@@ -479,8 +523,30 @@ final class CredentialService
             $isSuperAdmin = !empty($authenticatedViewer['is_super_admin']);
 
             if ($isSuperAdmin || ($viewerBizId === $bizId && $bizId > 0)) {
-                // Personal del mismo comercio -> Ficha operativa completa
-                return [
+                // Personal del mismo comercio -> Ficha operativa con datos mínimos necesarios según permisos
+                $viewerRole = (string) ($authenticatedViewer['role'] ?? 'staff');
+                $canViewCustomer = \App\Modules\Businesses\Permission::can($viewerRole, \App\Modules\Businesses\Permission::CUSTOMER_VIEW) || $isSuperAdmin;
+
+                $customerData = null;
+                if ($row['customer_id'] !== null && $canViewCustomer) {
+                    $customerData = [
+                        'id' => (int) $row['customer_id'],
+                        'first_name' => (string) $row['customer_first_name'],
+                        'last_name' => (string) $row['customer_last_name'],
+                    ];
+
+                    // Solo incluir canales de contacto si el usuario tiene permiso explícito de edición de clientes
+                    if (\App\Modules\Businesses\Permission::can($viewerRole, \App\Modules\Businesses\Permission::CUSTOMER_EDIT) || $isSuperAdmin) {
+                        if (!empty($row['customer_phone'])) {
+                            $customerData['phone'] = (string) $row['customer_phone'];
+                        }
+                        if (!empty($row['customer_email'])) {
+                            $customerData['email'] = (string) $row['customer_email'];
+                        }
+                    }
+                }
+
+                $staffView = [
                     'state' => 'active',
                     'mode' => 'staff',
                     'credential_id' => (int) $row['credential_id'],
@@ -490,21 +556,33 @@ final class CredentialService
                         'name' => (string) $row['business_name'],
                         'slug' => (string) $row['business_slug'],
                     ],
-                    'customer' => [
-                        'id' => (int) $row['customer_id'],
-                        'first_name' => (string) $row['customer_first_name'],
-                        'last_name' => (string) $row['customer_last_name'],
-                        'phone' => $row['customer_phone'] ? (string) $row['customer_phone'] : null,
-                        'email' => $row['customer_email'] ? (string) $row['customer_email'] : null,
-                    ],
-                    'loyalty_account' => [
-                        'id' => (int) $row['loyalty_account_id'],
-                        'profile_code' => (string) $row['profile_code'],
-                        'profile_name' => (string) $row['profile_name'],
-                        'balance' => (int) $row['balance'],
-                        'status' => (string) $row['account_status'],
+                    'loyalty_account' => $loyaltyAccountData,
+                    'actions' => [
+                        'can_adjust_points' => \App\Modules\Businesses\Permission::can($viewerRole, \App\Modules\Businesses\Permission::POINTS_ADJUST) && $hasPoints,
+                        'can_redeem_rewards' => \App\Modules\Businesses\Permission::can($viewerRole, \App\Modules\Businesses\Permission::REWARD_REDEEM) && $hasRewards,
+                        'can_redeem_offers' => \App\Modules\Businesses\Permission::can($viewerRole, \App\Modules\Businesses\Permission::OFFER_REDEEM) && ($hasOffers || $hasVipOffers),
                     ],
                 ];
+
+                if ($customerData !== null) {
+                    $staffView['customer'] = $customerData;
+                }
+
+                if ($hasPoints) {
+                    $staffView['program'] = $programService->getProgram($bizId);
+                    $staffView['recent_transactions'] = $pointsService->getAccountTransactions($bizId, $accountId, 1, 5)['data'];
+                }
+
+                if ($hasRewards) {
+                    $staffView['next_reward'] = $nextReward;
+                    $staffView['rewards'] = $availableRewards;
+                }
+
+                if ($hasOffers || $hasVipOffers) {
+                    $staffView['offers'] = $availableOffers;
+                }
+
+                return $staffView;
             }
 
             // Usuario autenticado de otro negocio -> Denegar datos del cliente
@@ -515,8 +593,8 @@ final class CredentialService
             ];
         }
 
-        // Observador anónimo -> Vista pública mínima (Reglas 5, 6, 7 y 10: Cero PII, solo perfil y balance)
-        return [
+        // Observador anónimo -> Vista pública mínima (Reglas 5, 6, 7 y 10: Cero PII, catálogo y ofertas permitidas)
+        $publicView = [
             'state' => 'active',
             'mode' => 'public',
             'credential_id' => (int) $row['credential_id'],
@@ -526,12 +604,19 @@ final class CredentialService
                 'name' => (string) $row['business_name'],
                 'slug' => (string) $row['business_slug'],
             ],
-            'loyalty_account' => [
-                'profile_code' => (string) $row['profile_code'],
-                'profile_name' => (string) $row['profile_name'],
-                'balance' => (int) $row['balance'],
-            ],
+            'loyalty_account' => $loyaltyAccountData,
         ];
+
+        if ($hasRewards) {
+            $publicView['next_reward'] = $nextReward;
+            $publicView['rewards'] = $availableRewards;
+        }
+
+        if ($hasOffers || $hasVipOffers) {
+            $publicView['offers'] = $availableOffers;
+        }
+
+        return $publicView;
     }
 
     /**

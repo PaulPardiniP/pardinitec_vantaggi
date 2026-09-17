@@ -23,6 +23,7 @@ final class Permission
     public const CARD_REASSIGN = 'card.reassign';
     public const CARD_REVOKE = 'card.revoke';
     public const OFFER_MANAGE = 'offer.manage';
+    public const OFFER_REDEEM = 'offer.redeem';
     public const CAMPAIGN_SEND = 'campaign.send';
     public const USER_MANAGE = 'user.manage';
     public const SETTINGS_MANAGE = 'settings.manage';
@@ -43,6 +44,7 @@ final class Permission
             self::CARD_REASSIGN,
             self::CARD_REVOKE,
             self::OFFER_MANAGE,
+            self::OFFER_REDEEM,
             self::CAMPAIGN_SEND,
             self::USER_MANAGE,
             self::SETTINGS_MANAGE,
@@ -62,6 +64,7 @@ final class Permission
             self::CARD_REASSIGN,
             self::CARD_REVOKE,
             self::OFFER_MANAGE,
+            self::OFFER_REDEEM,
             self::CAMPAIGN_SEND,
             self::USER_MANAGE,
             self::SETTINGS_MANAGE,
@@ -80,6 +83,7 @@ final class Permission
             self::CARD_REASSIGN,
             self::CARD_REVOKE,
             self::OFFER_MANAGE,
+            self::OFFER_REDEEM,
             self::CAMPAIGN_SEND,
         ],
         Role::STAFF => [
@@ -88,6 +92,7 @@ final class Permission
             self::CUSTOMER_EDIT,
             self::POINTS_ADJUST,
             self::REWARD_REDEEM,
+            self::OFFER_REDEEM,
             self::OPERATIONS_EXECUTE,
             self::CARD_ASSIGN,
         ],
@@ -116,6 +121,7 @@ final class Permission
             self::CARD_REASSIGN,
             self::CARD_REVOKE,
             self::OFFER_MANAGE,
+            self::OFFER_REDEEM,
             self::CAMPAIGN_SEND,
             self::USER_MANAGE,
             self::SETTINGS_MANAGE,

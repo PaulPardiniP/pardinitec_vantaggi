@@ -14,6 +14,9 @@ use App\Modules\Cards\CardController;
 use App\Modules\Cards\PublicCardController;
 use App\Modules\Customers\CustomerController;
 use App\Modules\Loyalty\LoyaltyController;
+use App\Modules\Offers\OfferController;
+use App\Modules\Points\PointsController;
+use App\Modules\Rewards\RewardController;
 
 // Configuración de CORS segura: sin comodín '*', compatible con cookies
 $defaultAllowedOrigins = [
@@ -240,6 +243,83 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/rotate$#', $cleanPath, $matches)) {
     $credentialController->rotate($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Puntos y Programas de Fidelización (Módulo Points)
+$pointsController = new PointsController();
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-program$#', $cleanPath, $matches)) {
+    $pointsController->getProgram($request, (int) $matches[1]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-program$#', $cleanPath, $matches)) {
+    $pointsController->updateProgram($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-program/calculate$#', $cleanPath, $matches)) {
+    $pointsController->calculate($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/points/adjust$#', $cleanPath, $matches)) {
+    $pointsController->adjust($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/points/transactions$#', $cleanPath, $matches)) {
+    $pointsController->listTransactions($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Premios (Módulo Rewards)
+$rewardController = new RewardController();
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/rewards$#', $cleanPath, $matches)) {
+    $rewardController->list($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/rewards$#', $cleanPath, $matches)) {
+    $rewardController->create($request, (int) $matches[1]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/rewards/(\d+)$#', $cleanPath, $matches)) {
+    $rewardController->get($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/rewards/(\d+)$#', $cleanPath, $matches)) {
+    $rewardController->update($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/rewards/(\d+)$#', $cleanPath, $matches)) {
+    $rewardController->delete($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/rewards/(\d+)/redeem$#', $cleanPath, $matches)) {
+    $rewardController->redeem($request, (int) $matches[1], (int) $matches[2], (int) $matches[3]);
+}
+
+// Rutas de Ofertas (Módulo Offers)
+$offerController = new OfferController();
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/offers$#', $cleanPath, $matches)) {
+    $offerController->list($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/offers$#', $cleanPath, $matches)) {
+    $offerController->create($request, (int) $matches[1]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)$#', $cleanPath, $matches)) {
+    $offerController->get($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)$#', $cleanPath, $matches)) {
+    $offerController->update($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)$#', $cleanPath, $matches)) {
+    $offerController->delete($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/offers/(\d+)/redeem$#', $cleanPath, $matches)) {
+    $offerController->redeem($request, (int) $matches[1], (int) $matches[2], (int) $matches[3]);
 }
 
 // Rutas de Resolución Pública Segura (/c/<token> y /api/v1/public/cards/<token>)
