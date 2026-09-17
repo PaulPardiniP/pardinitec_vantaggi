@@ -59,7 +59,10 @@ final class AuthController
             );
 
             Response::success('Inicio de sesión exitoso.', [
-                'data' => $result,
+                'data' => [
+                    'user' => $result['user'],
+                    'csrf_token' => $result['csrf_token'],
+                ],
             ], 200);
         } catch (InvalidArgumentException $e) {
             Response::error($e->getMessage(), 401);

@@ -47,15 +47,22 @@ final class SessionManager
         return (($_ENV['APP_ENV'] ?? 'local') === 'production');
     }
 
+    public static function hashToken(string $plainToken): string
+    {
+        return hash('sha256', $plainToken);
+    }
+
     /**
-     * Crea una nueva sesión persistida en base de datos y emite la cookie segura.
+     * Crea una nueva sesión persistiendo ÚNICAMENTE el hash SHA-256 en MariaDB.
+     * El token plano original se envía exclusivamente a la cookie del cliente.
      *
-     * @return array{id: string, user_id: int, csrf_token: string, expires_at: string}
+     * @return array{id: string, token_hash: string, user_id: int, csrf_token: string, expires_at: string}
      */
     public function createSession(int $userId, ?string $ipAddress = null, ?string $userAgent = null): array
     {
-        $sessionId = bin2hex(random_bytes(32)); // 64 caracteres
-        $csrfToken = Csrf::generateToken();     // 64 caracteres
+        $plainToken = bin2hex(random_bytes(32)); // 64 caracteres hex (token original para cookie)
+        $tokenHash = self::hashToken($plainToken); // Hash SHA-256 almacenado en DB
+        $csrfToken = Csrf::generateToken();       // 64 caracteres hex
 
         $stmt = $this->pdo->prepare("
             INSERT INTO `sessions` (`id`, `user_id`, `csrf_token`, `ip_address`, `user_agent`, `last_activity_at`, `created_at`, `expires_at`)
@@ -72,7 +79,7 @@ final class SessionManager
         ");
 
         $stmt->execute([
-            'id' => $sessionId,
+            'id' => $tokenHash,
             'user_id' => $userId,
             'csrf_token' => $csrfToken,
             'ip_address' => $ipAddress,
@@ -80,10 +87,11 @@ final class SessionManager
             'abs_timeout' => $this->absoluteTimeout,
         ]);
 
-        $this->sendSessionCookie($sessionId, time() + $this->absoluteTimeout);
+        $this->sendSessionCookie($plainToken, time() + $this->absoluteTimeout);
 
         return [
-            'id' => $sessionId,
+            'id' => $plainToken,
+            'token_hash' => $tokenHash,
             'user_id' => $userId,
             'csrf_token' => $csrfToken,
             'expires_at' => gmdate('Y-m-d H:i:s', time() + $this->absoluteTimeout),
@@ -91,13 +99,15 @@ final class SessionManager
     }
 
     /**
-     * Regenera el ID de sesión (protección contra Session Fixation).
+     * Regenera el ID de sesión.
      *
-     * @return array{id: string, user_id: int, csrf_token: string}
+     * @return array{id: string, token_hash: string, user_id: int, csrf_token: string}|null
      */
-    public function regenerateSession(string $currentSessionId): ?array
+    public function regenerateSession(string $currentPlainToken): ?array
     {
-        $newSessionId = bin2hex(random_bytes(32));
+        $currentHash = self::hashToken($currentPlainToken);
+        $newPlainToken = bin2hex(random_bytes(32));
+        $newHash = self::hashToken($newPlainToken);
 
         $stmt = $this->pdo->prepare("
             UPDATE `sessions`
@@ -107,49 +117,52 @@ final class SessionManager
         ");
 
         $stmt->execute([
-            'new_id' => $newSessionId,
-            'current_id' => $currentSessionId,
+            'new_id' => $newHash,
+            'current_id' => $currentHash,
         ]);
 
         if ($stmt->rowCount() === 0) {
             return null;
         }
 
-        $session = $this->getSessionById($newSessionId);
+        $session = $this->getSessionByHash($newHash);
         if ($session === null) {
             return null;
         }
 
-        $this->sendSessionCookie($newSessionId, time() + $this->absoluteTimeout);
+        $this->sendSessionCookie($newPlainToken, time() + $this->absoluteTimeout);
 
         return [
-            'id' => $newSessionId,
+            'id' => $newPlainToken,
+            'token_hash' => $newHash,
             'user_id' => (int) $session['user_id'],
             'csrf_token' => (string) $session['csrf_token'],
         ];
     }
 
     /**
-     * Valida la sesión activa comprobando existencia, usuario activo, timeout de inactividad y timeout absoluto.
+     * Valida la sesión activa buscando por el hash SHA-256 del token provisto en la cookie.
      *
-     * @return array{session_id: string, user_id: int, csrf_token: string, user: array{id: int, email: string, name: string, status: string}}|null
+     * @return array{session_id: string, token_hash: string, user_id: int, csrf_token: string, user: array{id: int, email: string, name: string, status: string}}|null
      */
-    public function validateSession(?string $sessionId = null): ?array
+    public function validateSession(?string $plainToken = null): ?array
     {
-        $id = $sessionId ?? ($_COOKIE[$this->cookieName] ?? null);
-        if ($id === null || trim($id) === '') {
+        $token = $plainToken ?? ($_COOKIE[$this->cookieName] ?? null);
+        if ($token === null || trim($token) === '') {
             return null;
         }
 
+        $tokenHash = self::hashToken($token);
+
         $stmt = $this->pdo->prepare("
-            SELECT s.`id` AS session_id, s.`user_id`, s.`csrf_token`, s.`last_activity_at`, s.`created_at`, s.`expires_at`,
-                   u.`id` AS u_id, u.`email`, u.`name`, u.`status`
+            SELECT s.`id` AS token_hash, s.`user_id`, s.`csrf_token`, s.`last_activity_at`, s.`created_at`, s.`expires_at`,
+                   u.`id` AS u_id, u.`email`, u.`name`, u.`status`, u.`is_super_admin`
             FROM `sessions` s
             INNER JOIN `users` u ON s.`user_id` = u.`id`
             WHERE s.`id` = :id
             LIMIT 1
         ");
-        $stmt->execute(['id' => $id]);
+        $stmt->execute(['id' => $tokenHash]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row) {
@@ -159,7 +172,7 @@ final class SessionManager
 
         // Usuario suspendido o inactivo
         if ($row['status'] !== 'active') {
-            $this->destroySession($id);
+            $this->destroySession($token);
             return null;
         }
 
@@ -170,13 +183,13 @@ final class SessionManager
 
         // 1. Timeout Absoluto
         if ($now >= $expiresAtUtc || ($now - $createdAtUtc) >= $this->absoluteTimeout) {
-            $this->destroySession($id);
+            $this->destroySession($token);
             return null;
         }
 
         // 2. Timeout de Inactividad
         if (($now - $lastActivityUtc) >= $this->inactivityTimeout) {
-            $this->destroySession($id);
+            $this->destroySession($token);
             return null;
         }
 
@@ -186,10 +199,11 @@ final class SessionManager
             SET `last_activity_at` = UTC_TIMESTAMP()
             WHERE `id` = :id
         ");
-        $updateStmt->execute(['id' => $id]);
+        $updateStmt->execute(['id' => $tokenHash]);
 
         return [
-            'session_id' => $row['session_id'],
+            'session_id' => $token,
+            'token_hash' => $tokenHash,
             'user_id' => (int) $row['user_id'],
             'csrf_token' => $row['csrf_token'],
             'user' => [
@@ -197,39 +211,41 @@ final class SessionManager
                 'email' => $row['email'],
                 'name' => $row['name'],
                 'status' => $row['status'],
+                'is_super_admin' => (bool) $row['is_super_admin'],
             ],
         ];
     }
 
     /**
-     * Invalida realmente la sesión eliminándola de la base de datos y limpiando la cookie.
+     * Invalida realmente la sesión eliminando el hash de la base de datos y limpiando la cookie.
      */
-    public function destroySession(?string $sessionId = null): void
+    public function destroySession(?string $plainToken = null): void
     {
-        $id = $sessionId ?? ($_COOKIE[$this->cookieName] ?? null);
-        if ($id !== null && trim($id) !== '') {
+        $token = $plainToken ?? ($_COOKIE[$this->cookieName] ?? null);
+        if ($token !== null && trim($token) !== '') {
+            $tokenHash = self::hashToken($token);
             $stmt = $this->pdo->prepare("DELETE FROM `sessions` WHERE `id` = :id");
-            $stmt->execute(['id' => $id]);
+            $stmt->execute(['id' => $tokenHash]);
         }
 
         $this->clearSessionCookie();
     }
 
-    public function getSessionById(string $sessionId): ?array
+    public function getSessionByHash(string $tokenHash): ?array
     {
         $stmt = $this->pdo->prepare("SELECT * FROM `sessions` WHERE `id` = :id LIMIT 1");
-        $stmt->execute(['id' => $sessionId]);
+        $stmt->execute(['id' => $tokenHash]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
 
-    public function sendSessionCookie(string $sessionId, int $expiresTimestamp): void
+    public function sendSessionCookie(string $plainToken, int $expiresTimestamp): void
     {
         if (headers_sent()) {
             return;
         }
 
-        setcookie($this->cookieName, $sessionId, [
+        setcookie($this->cookieName, $plainToken, [
             'expires' => $expiresTimestamp,
             'path' => '/',
             'domain' => '',

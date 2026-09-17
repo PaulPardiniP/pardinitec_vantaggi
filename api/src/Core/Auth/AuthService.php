@@ -76,8 +76,8 @@ final class AuthService
         $passwordHash = $this->hasher->hash($password);
 
         $insertStmt = $this->pdo->prepare("
-            INSERT INTO `users` (`name`, `email`, `password_hash`, `status`, `created_at`, `updated_at`)
-            VALUES (:name, :email, :password_hash, 'active', UTC_TIMESTAMP(), UTC_TIMESTAMP())
+            INSERT INTO `users` (`name`, `email`, `password_hash`, `status`, `is_super_admin`, `created_at`, `updated_at`)
+            VALUES (:name, :email, :password_hash, 'active', 0, UTC_TIMESTAMP(), UTC_TIMESTAMP())
         ");
 
         $insertStmt->execute([
@@ -93,11 +93,12 @@ final class AuthService
             'name' => $name,
             'email' => $email,
             'status' => 'active',
+            'is_super_admin' => false,
         ];
     }
 
     /**
-     * @return array{user: array{id: int, name: string, email: string, status: string}, csrf_token: string}
+     * @return array{user: array{id: int, name: string, email: string, status: string, is_super_admin: bool}, csrf_token: string}
      */
     public function login(
         string $email,
@@ -145,7 +146,9 @@ final class AuthService
                 'name' => (string) $user['name'],
                 'email' => (string) $user['email'],
                 'status' => (string) $user['status'],
+                'is_super_admin' => (bool) $user['is_super_admin'],
             ],
+            'session_token' => $session['id'],
             'csrf_token' => $session['csrf_token'],
         ];
     }
