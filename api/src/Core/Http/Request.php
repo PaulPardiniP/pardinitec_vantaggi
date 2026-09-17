@@ -10,13 +10,15 @@ final class Request
     private string $path;
     private array $headers;
     private array $cookies;
+    private array $query;
     private ?array $jsonBody = null;
 
     public function __construct(
         ?string $method = null,
         ?string $uri = null,
         ?array $headers = null,
-        ?array $cookies = null
+        ?array $cookies = null,
+        ?array $query = null
     ) {
         $this->method = strtoupper($method ?? ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         
@@ -26,6 +28,15 @@ final class Request
 
         $this->headers = $headers ?? $this->captureHeaders();
         $this->cookies = $cookies ?? $_COOKIE;
+        $this->query = $query ?? $_GET;
+    }
+
+    public function getQuery(?string $name = null, mixed $default = null): mixed
+    {
+        if ($name === null) {
+            return $this->query;
+        }
+        return $this->query[$name] ?? $default;
     }
 
     public static function capture(): self

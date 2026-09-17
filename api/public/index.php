@@ -7,7 +7,10 @@ require_once __DIR__ . '/../bootstrap.php';
 use App\Core\Auth\AuthController;
 use App\Core\Http\Request;
 use App\Core\Http\Response;
+use App\Modules\AccessCredentials\CredentialController;
 use App\Modules\Businesses\BusinessController;
+use App\Modules\Customers\CustomerController;
+use App\Modules\Loyalty\LoyaltyController;
 
 // Configuración de CORS segura: sin comodín '*', compatible con cookies
 $defaultAllowedOrigins = [
@@ -110,6 +113,80 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/members$#', $cl
 
 if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/members/(\d+)$#', $cleanPath, $matches)) {
     $businessController->removeMember($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Perfiles de Fidelización (Módulo Loyalty)
+$loyaltyController = new LoyaltyController();
+
+if ($method === 'GET' && $cleanPath === '/api/v1/card-profiles') {
+    $loyaltyController->listProfiles($request);
+}
+
+// Rutas de Clientes y Consentimientos (Módulo Customers)
+$customerController = new CustomerController();
+
+// 1. Alta integrada de cliente (Onboarding)
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/onboard$#', $cleanPath, $matches)) {
+    $customerController->onboard($request, (int) $matches[1]);
+}
+
+// 2. Creación / Onboarding de cliente
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers$#', $cleanPath, $matches)) {
+    $customerController->onboard($request, (int) $matches[1]);
+}
+
+// 3. Listado paginado y búsqueda de clientes
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers$#', $cleanPath, $matches)) {
+    $customerController->list($request, (int) $matches[1]);
+}
+
+// 4. Detalle de cliente
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)$#', $cleanPath, $matches)) {
+    $customerController->get($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// 5. Actualización de datos de cliente
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)$#', $cleanPath, $matches)) {
+    $customerController->update($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// 6. Consulta de consentimientos de cliente
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/consents$#', $cleanPath, $matches)) {
+    $customerController->getConsents($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// 7. Revocación de consentimiento de marketing
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/consents/revoke-marketing$#', $cleanPath, $matches)) {
+    $customerController->revokeMarketing($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// 8. Registro de consentimiento
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/consents$#', $cleanPath, $matches)) {
+    $customerController->recordConsent($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Cuentas de Fidelización
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/loyalty-accounts$#', $cleanPath, $matches)) {
+    $loyaltyController->listCustomerAccounts($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/loyalty-accounts$#', $cleanPath, $matches)) {
+    $loyaltyController->createAccount($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Credenciales de Acceso (Módulo AccessCredentials)
+$credentialController = new CredentialController();
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/credentials$#', $cleanPath, $matches)) {
+    $credentialController->issue($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/revoke$#', $cleanPath, $matches)) {
+    $credentialController->revoke($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/rotate$#', $cleanPath, $matches)) {
+    $credentialController->rotate($request, (int) $matches[1], (int) $matches[2]);
 }
 
 // Ruta no encontrada

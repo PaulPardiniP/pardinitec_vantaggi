@@ -20,6 +20,30 @@ Nessuna logica di business, autenticazione o database è ancora implementata.
 
 ---
 
+## Modelo Funcional: Perfiles y Cuentas de Fidelización (Contrato Técnico v7)
+
+> **Decisión Arquitectónica Fundamental:**
+> **Punti**, **Vantaggi** y **VIP** **NO** son niveles acumulativos ni representan una progresión obligatoria. Son perfiles y programas de fidelización completamente independientes.
+
+### Reglas Clave:
+1. **Multi-cuenta por perfiles distintos**: Dentro del mismo negocio, un cliente puede tener:
+   - solamente cuenta **Punti**;
+   - solamente cuenta **Vantaggi**;
+   - solamente cuenta **VIP**;
+   - o múltiples cuentas activas simultáneamente (ej. **Punti + VIP**).
+2. **Aislamiento de cuenta**: Cada `loyalty_account` pertenece a un único perfil (`card_profile_id`). Posee su propio saldo, historial y credencial de acceso.
+3. **Unicidad por perfil**: Restricción MariaDB `UNIQUE KEY (business_id, customer_id, card_profile_id)`. Se impide únicamente que un cliente tenga dos cuentas del mismo perfil dentro del mismo negocio.
+4. **Vistas de credencial según perfil**:
+   - Una credencial **VIP** expone exclusivamente contenido VIP. No incluye Punti ni Vantaggi.
+   - Una credencial **Punti** expone exclusivamente el saldo y movimientos de puntos.
+   - Una credencial **Vantaggi** expone sus beneficios y contenidos habilitados.
+5. **Máximo una credencial digital activa por cuenta**: Cada `loyalty_account` puede tener como máximo **una** credencial digital activa (`status = 'active'`). Para sustituirla debe utilizarse obligatoriamente la rotación segura (`rotate`), marcando la anterior como `replaced`.
+6. **Seguridad y permisos**:
+   - `/api/v1/card-profiles` requiere sesión autenticada.
+   - El personal autorizado con rol `staff` en el comercio dispone de los permisos necesarios (`customer.edit`) para realizar el onboarding presencial de clientes.
+
+---
+
 ## Struttura delle Cartelle
 
 ```text

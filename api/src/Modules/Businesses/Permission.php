@@ -85,6 +85,7 @@ final class Permission
         Role::STAFF => [
             self::BUSINESS_VIEW,
             self::CUSTOMER_VIEW,
+            self::CUSTOMER_EDIT,
             self::POINTS_ADJUST,
             self::REWARD_REDEEM,
             self::OPERATIONS_EXECUTE,

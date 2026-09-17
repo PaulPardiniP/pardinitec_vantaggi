@@ -317,6 +317,107 @@ try {
     $resDelMember = httpRequest("DELETE", "/api/v1/businesses/{$createdBizId}/members/{$user2Id}", null, ['X-CSRF-Token' => $csrfToken], $sessionCookie);
     assertHttp("DELETE /api/v1/businesses/{id}/members/{userId} remueve miembro con 200", $resDelMember['status'] === 200 && $resDelMember['json']['success'] === true);
 
+    echo PHP_EOL . "--- Pruebas HTTP de Customers, Consents, Loyalty y Credentials ---" . PHP_EOL;
+
+    // 21. GET /api/v1/card-profiles requiere autenticación (Regla 9)
+    $resProfilesNoAuth = httpRequest('GET', '/api/v1/card-profiles');
+    assertHttp("GET /card-profiles sin autenticación es rechazado con 401", $resProfilesNoAuth['status'] === 401);
+
+    $resProfiles = httpRequest('GET', '/api/v1/card-profiles', null, [], $sessionCookie);
+    assertHttp("GET /card-profiles autenticado responde 200 con perfiles sembrados",
+        $resProfiles['status'] === 200 &&
+        count($resProfiles['json']['data']) >= 3
+    );
+
+    // 22. POST /api/v1/businesses/{id}/customers/onboard sin consentimiento de privacidad -> 422
+    $resOnboardNoPriv = httpRequest("POST", "/api/v1/businesses/{$createdBizId}/customers/onboard", [
+        'first_name' => 'Lucca',
+        'last_name' => 'Romano',
+        'privacy_accepted' => false,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /customers/onboard sin privacidad es rechazado con 422", $resOnboardNoPriv['status'] === 422);
+
+    // 23. POST /api/v1/businesses/{id}/customers/onboard exitoso con 201
+    $resOnboard = httpRequest("POST", "/api/v1/businesses/{$createdBizId}/customers/onboard", [
+        'first_name' => 'Lucca',
+        'last_name' => 'Romano',
+        'phone' => '+39021234567',
+        'email' => 'lucca.romano@test.com',
+        'privacy_accepted' => true,
+        'marketing_accepted' => true,
+        'card_profile_code' => 'punti',
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /customers/onboard responde 201 y crea cliente + cuenta + credencial",
+        $resOnboard['status'] === 201 &&
+        !empty($resOnboard['json']['data']['customer']['id']) &&
+        !empty($resOnboard['json']['data']['loyalty_account']['id']) &&
+        !empty($resOnboard['json']['data']['access_credential']['id'])
+    );
+
+    $createdCustomerId = (int) $resOnboard['json']['data']['customer']['id'];
+    $createdCredId = (int) $resOnboard['json']['data']['access_credential']['id'];
+    $rawToken = (string) $resOnboard['json']['data']['token'];
+
+    assertHttp("POST /customers/onboard retorna token plano de 64 caracteres hex", strlen($rawToken) === 64);
+    assertHttp("POST /customers/onboard retorna URL pública adaptativa /c/{token}", $resOnboard['json']['data']['public_url'] === "/c/{$rawToken}");
+
+    // 24. GET /api/v1/businesses/{id}/customers
+    $resListCust = httpRequest("GET", "/api/v1/businesses/{$createdBizId}/customers", null, [], $sessionCookie);
+    assertHttp("GET /customers responde 200 con listado paginado",
+        $resListCust['status'] === 200 &&
+        isset($resListCust['json']['pagination']['total']) &&
+        $resListCust['json']['pagination']['total'] >= 1
+    );
+
+    // 25. GET /api/v1/businesses/{id}/customers/{customerId}
+    $resGetCust = httpRequest("GET", "/api/v1/businesses/{$createdBizId}/customers/{$createdCustomerId}", null, [], $sessionCookie);
+    assertHttp("GET /customers/{id} responde 200 con detalle y estado de consentimientos",
+        $resGetCust['status'] === 200 &&
+        $resGetCust['json']['data']['first_name'] === 'Lucca' &&
+        $resGetCust['json']['data']['consents']['privacy_granted'] === true &&
+        $resGetCust['json']['data']['consents']['marketing_granted'] === true
+    );
+
+    // 26. PUT /api/v1/businesses/{id}/customers/{customerId}
+    $resUpdateCust = httpRequest("PUT", "/api/v1/businesses/{$createdBizId}/customers/{$createdCustomerId}", [
+        'first_name' => 'Lucca Paolo',
+        'last_name' => 'Romano',
+        'phone' => '+39029998888',
+        'email' => 'lucca.paolo@test.com',
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("PUT /customers/{id} actualiza datos del cliente correctamente con 200",
+        $resUpdateCust['status'] === 200 &&
+        $resUpdateCust['json']['data']['first_name'] === 'Lucca Paolo'
+    );
+
+    // 27. POST /api/v1/businesses/{id}/customers/{customerId}/consents/revoke-marketing
+    $resRevokeMkt = httpRequest("POST", "/api/v1/businesses/{$createdBizId}/customers/{$createdCustomerId}/consents/revoke-marketing", null, ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /consents/revoke-marketing revoca marketing exitosamente con 200",
+        $resRevokeMkt['status'] === 200 &&
+        $resRevokeMkt['json']['data']['status'] === 'revoked'
+    );
+
+    // 28. POST /api/v1/businesses/{id}/credentials/{credentialId}/rotate
+    $resRotate = httpRequest("POST", "/api/v1/businesses/{$createdBizId}/credentials/{$createdCredId}/rotate", null, ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /credentials/{id}/rotate rota credencial con 200 y nuevo token",
+        $resRotate['status'] === 200 &&
+        $resRotate['json']['data']['id'] > $createdCredId &&
+        strlen($resRotate['json']['data']['token']) === 64
+    );
+
+    // 29. Aislamiento HTTP: Usuario ajeno no puede listar clientes de Biz A
+    $resCrossCust = httpRequest("GET", "/api/v1/businesses/{$createdBizId}/customers", null, [], $cookie2);
+    assertHttp("Aislamiento HTTP: Usuario ajeno recibe 403 al listar clientes de otro comercio", $resCrossCust['status'] === 403);
+
+    // 30. Aislamiento HTTP: Usuario ajeno no puede hacer onboarding en Biz A
+    $resCrossOnboard = httpRequest("POST", "/api/v1/businesses/{$createdBizId}/customers/onboard", [
+        'first_name' => 'Hacker',
+        'last_name' => 'Intruder',
+        'privacy_accepted' => true,
+    ], ['X-CSRF-Token' => $csrfToken], $cookie2);
+    assertHttp("Aislamiento HTTP: Usuario ajeno recibe 403 al intentar onboarding en otro comercio", $resCrossOnboard['status'] === 403);
+
     echo PHP_EOL . "--- Pruebas de Logout y Destrucción de Sesión ---" . PHP_EOL;
 
     // 20. Logout sin CSRF -> 403 Forbidden
