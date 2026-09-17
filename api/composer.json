@@ -1,0 +1,14 @@
+{
+  "name": "pardinitec/vantaggi-api",
+  "description": "Pardinitec Vantaggi API - Modular Monolith Backend",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "vlucas/phpdotenv": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  }
+}

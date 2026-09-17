@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+*/node_modules/
+api/vendor/
+composer.phar
+
+# Build outputs
+dist/
+*/dist/
+.vite/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
