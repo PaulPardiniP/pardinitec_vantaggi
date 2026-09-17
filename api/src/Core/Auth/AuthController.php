@@ -7,16 +7,19 @@ namespace App\Core\Auth;
 use App\Core\Http\Request;
 use App\Core\Http\Response;
 use App\Core\Security\Csrf;
+use App\Core\Security\RateLimiter;
 use InvalidArgumentException;
 use Throwable;
 
 final class AuthController
 {
     private AuthService $authService;
+    private RateLimiter $rateLimiter;
 
-    public function __construct(?AuthService $authService = null)
+    public function __construct(?AuthService $authService = null, ?RateLimiter $rateLimiter = null)
     {
         $this->authService = $authService ?? new AuthService();
+        $this->rateLimiter = $rateLimiter ?? new RateLimiter();
     }
 
     public function register(Request $request): void
@@ -46,26 +49,55 @@ final class AuthController
             $email = (string) ($body['email'] ?? '');
             $password = (string) ($body['password'] ?? '');
 
+            $clientIp = $request->getClientIp() ?? '127.0.0.1';
+            $rateKey = $clientIp . ':' . strtolower(trim($email));
+
+            // Comprobar límite previo (5 intentos fallidos por ventana de 60 segundos)
+            $check = $this->rateLimiter->check('auth.login', $rateKey, 5);
+            if (!$check['allowed']) {
+                Response::error(
+                    'Demasiados intentos de inicio de sesión. Por favor, intente nuevamente más tarde.',
+                    429,
+                    [],
+                    ['Retry-After' => (string) $check['retry_after']]
+                );
+            }
+
             $existingSessionId = $request->getCookie(
                 $this->authService->getSessionManager()->getCookieName()
             );
 
-            $result = $this->authService->login(
-                $email,
-                $password,
-                $request->getClientIp(),
-                $request->getUserAgent(),
-                $existingSessionId
-            );
+            try {
+                $result = $this->authService->login(
+                    $email,
+                    $password,
+                    $request->getClientIp(),
+                    $request->getUserAgent(),
+                    $existingSessionId
+                );
 
-            Response::success('Inicio de sesión exitoso.', [
-                'data' => [
-                    'user' => $result['user'],
-                    'csrf_token' => $result['csrf_token'],
-                ],
-            ], 200);
-        } catch (InvalidArgumentException $e) {
-            Response::error($e->getMessage(), 401);
+                // En login exitoso se reinicia el contador de intentos fallidos
+                $this->rateLimiter->reset('auth.login', $rateKey);
+
+                Response::success('Inicio de sesión exitoso.', [
+                    'data' => [
+                        'user' => $result['user'],
+                        'csrf_token' => $result['csrf_token'],
+                    ],
+                ], 200);
+            } catch (InvalidArgumentException $e) {
+                // Registrar intento fallido
+                $hit = $this->rateLimiter->hit('auth.login', $rateKey, 5, 60);
+                if (!$hit['allowed']) {
+                    Response::error(
+                        'Demasiados intentos de inicio de sesión. Por favor, intente nuevamente más tarde.',
+                        429,
+                        [],
+                        ['Retry-After' => (string) $hit['retry_after']]
+                    );
+                }
+                Response::error($e->getMessage(), 401);
+            }
         } catch (Throwable $e) {
             Response::error('Error al iniciar sesión.', 500);
         }

@@ -42,7 +42,8 @@ final class Response
     public static function error(
         string $message,
         int $statusCode = 400,
-        array $errors = []
+        array $errors = [],
+        array $headers = []
     ): void {
         $payload = [
             'success' => false,
@@ -53,6 +54,6 @@ final class Response
             $payload['errors'] = $errors;
         }
 
-        self::json($payload, $statusCode);
+        self::json($payload, $statusCode, $headers);
     }
 }

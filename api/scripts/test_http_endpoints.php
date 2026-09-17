@@ -418,6 +418,177 @@ try {
     ], ['X-CSRF-Token' => $csrfToken], $cookie2);
     assertHttp("Aislamiento HTTP: Usuario ajeno recibe 403 al intentar onboarding en otro comercio", $resCrossOnboard['status'] === 403);
 
+    echo PHP_EOL . "--- Pruebas HTTP de Tarjetas Físicas, Inventario y Resolución (Etapa 2) ---" . PHP_EOL;
+
+    // 31. Super Admin: Registro y login
+    $adminEmail = 'http_superadmin_' . time() . '@vantaggi.com';
+    httpRequest('POST', '/api/v1/auth/register', ['name' => 'Admin HTTP', 'email' => $adminEmail, 'password' => 'Password123!']);
+    $pdo->exec("UPDATE `users` SET `is_super_admin` = 1 WHERE `email` = '{$adminEmail}'");
+
+    $resAdminLogin = httpRequest('POST', '/api/v1/auth/login', ['email' => $adminEmail, 'password' => 'Password123!']);
+    $adminCookie = null;
+    foreach ($resAdminLogin['cookies'] as $c) {
+        if (str_starts_with($c, 'vantaggi_session=')) {
+            $adminCookie = $c;
+            break;
+        }
+    }
+    $adminCsrf = $resAdminLogin['json']['data']['csrf_token'];
+
+    // 32. Usuario normal bloqueado de endpoints de Super Admin con 403
+    $resBlockAdmin = httpRequest('POST', '/api/v1/admin/cards', [], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("Usuario no Super Admin bloqueado con 403 en admin/cards", $resBlockAdmin['status'] === 403);
+
+    // 33. Super Admin crea lote de 2 tarjetas en inventario
+    $resBatchCards = httpRequest('POST', '/api/v1/admin/cards/batch', [
+        'count' => 2,
+    ], ['X-CSRF-Token' => $adminCsrf], $adminCookie);
+
+    assertHttp("Super Admin crea lote de tarjetas en inventario con 201",
+        $resBatchCards['status'] === 201 &&
+        count($resBatchCards['json']['data']) === 2
+    );
+
+    $card1 = $resBatchCards['json']['data'][0];
+    $card2 = $resBatchCards['json']['data'][1];
+    $card1Id = (int) $card1['id'];
+    $card2Id = (int) $card2['id'];
+    $card1Token = (string) $card1['token'];
+    $card2Token = (string) $card2['token'];
+
+    // 34. Super Admin asigna lote a Comercio A
+    $resAssignCards = httpRequest('POST', '/api/v1/admin/cards/assign', [
+        'card_ids' => [$card1Id, $card2Id],
+        'business_id' => $createdBizId,
+    ], ['X-CSRF-Token' => $adminCsrf], $adminCookie);
+
+    assertHttp("Super Admin asigna tarjetas a Comercio A con 200",
+        $resAssignCards['status'] === 200 &&
+        count($resAssignCards['json']['data']) === 2
+    );
+
+    // 35. Comercio A lista sus tarjetas y las encuentra en estado 'issued'
+    $resBizCards = httpRequest('GET', "/api/v1/businesses/{$createdBizId}/cards", null, [], $sessionCookie);
+    assertHttp("Comercio A lista sus tarjetas y responde 200 en estado 'issued'",
+        $resBizCards['status'] === 200 &&
+        $resBizCards['json']['data'][0]['status'] === 'issued'
+    );
+
+    // Obtener la loyalty_account_id creada previamente en el onboarding
+    $createdAccountId = (int) $resOnboard['json']['data']['loyalty_account']['id'];
+
+    // 36. Comercio A activa la tarjeta 1 vinculándola a la loyalty_account
+    $resActivateCard = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card1Id}/activate", [
+        'loyalty_account_id' => $createdAccountId,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /businesses/{id}/cards/{id}/activate activa tarjeta con 200",
+        $resActivateCard['status'] === 200 &&
+        $resActivateCard['json']['data']['status'] === 'active' &&
+        $resActivateCard['json']['data']['loyalty_account_id'] === $createdAccountId
+    );
+
+    // 37. Suspender y reactivar tarjeta física
+    $resSuspendCard = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card1Id}/suspend", null, ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /cards/{id}/suspend suspende tarjeta con 200",
+        $resSuspendCard['status'] === 200 &&
+        $resSuspendCard['json']['data']['status'] === 'suspended'
+    );
+
+    $resReactivateCard = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card1Id}/reactivate", null, ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    assertHttp("POST /cards/{id}/reactivate reactiva tarjeta con 200",
+        $resReactivateCard['status'] === 200 &&
+        $resReactivateCard['json']['data']['status'] === 'active'
+    );
+
+    // 38. Reemplazar tarjeta 1 por tarjeta 2
+    $resReplaceCard = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card1Id}/replace", [
+        'new_card_id' => $card2Id,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /cards/{id}/replace reemplaza tarjeta con 200",
+        $resReplaceCard['status'] === 200 &&
+        $resReplaceCard['json']['data']['old_card']['status'] === 'replaced' &&
+        $resReplaceCard['json']['data']['new_card']['status'] === 'active'
+    );
+
+    // 39. Resolución pública: Nueva tarjeta activa responde 200 a anónimos sin PII
+    $resResolveNew = httpRequest('GET', "/c/{$card2Token}");
+    assertHttp("GET /c/<new_token> resuelve tarjeta activa a anónimo con 200 sin PII",
+        $resResolveNew['status'] === 200 &&
+        $resResolveNew['json']['data']['state'] === 'active' &&
+        $resResolveNew['json']['data']['mode'] === 'public' &&
+        !isset($resResolveNew['json']['data']['customer'])
+    );
+
+    // 40. Resolución pública: Tarjeta anterior replaced responde 404 (no disponible)
+    $resResolveOld = httpRequest('GET', "/c/{$card1Token}");
+    assertHttp("GET /c/<old_token> responde 404 para tarjeta reemplazada",
+        $resResolveOld['status'] === 404
+    );
+
+    // 41. Aislamiento HTTP: Usuario de otro comercio bloqueado al operar tarjeta de Comercio A
+    $resCrossCardAction = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card2Id}/suspend", null, ['X-CSRF-Token' => $csrfToken], $cookie2);
+    assertHttp("Aislamiento HTTP: Usuario ajeno recibe 403 al operar tarjeta de otro comercio",
+        $resCrossCardAction['status'] === 403
+    );
+
+    // 42. HTTP card.reassign: Onboard cliente 2 y reasignar tarjeta 2
+    $resOnboardCust2 = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/customers/onboard", [
+        'first_name' => 'Lucia',
+        'last_name' => 'Verdi',
+        'privacy_accepted' => true,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+    $cust2AccId = (int) $resOnboardCust2['json']['data']['loyalty_account']['id'];
+
+    $resHttpReassign = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/cards/{$card2Id}/reassign", [
+        'new_loyalty_account_id' => $cust2AccId,
+    ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
+
+    assertHttp("POST /cards/{id}/reassign reasigna tarjeta con 200 y requires_reprogramming",
+        $resHttpReassign['status'] === 200 &&
+        $resHttpReassign['json']['data']['card']['loyalty_account_id'] === $cust2AccId &&
+        $resHttpReassign['json']['data']['requires_reprogramming'] === true &&
+        !empty($resHttpReassign['json']['data']['token'])
+    );
+
+    $reassignedToken = (string) $resHttpReassign['json']['data']['token'];
+
+    // 43. Resolución pública tras reasignación: antiguo token responde 404
+    $resOldTokenAfterReassign = httpRequest('GET', "/c/{$card2Token}");
+    assertHttp("Token físico anterior a la reasignación responde 404 (no disponible)",
+        $resOldTokenAfterReassign['status'] === 404
+    );
+
+    // 44. Rate Limiting en Login: 5 intentos fallidos dan 401; el 6to devuelve 429
+    $rateLimitEmail = 'ratelimit_victim_' . time() . '@test.com';
+    for ($i = 0; $i < 5; $i++) {
+        httpRequest('POST', '/api/v1/auth/login', ['email' => $rateLimitEmail, 'password' => 'WrongPassword!']);
+    }
+    $resBlockedLogin = httpRequest('POST', '/api/v1/auth/login', ['email' => $rateLimitEmail, 'password' => 'WrongPassword!']);
+    assertHttp("Rate limiting en login bloquea el 6to intento fallido con HTTP 429",
+        $resBlockedLogin['status'] === 429 &&
+        stripos($resBlockedLogin['headers'], 'Retry-After:') !== false
+    );
+
+    // 45. Rate Limiting en /c/{token}: consultas de tokens inexistentes activan 429
+    for ($i = 0; $i < 20; $i++) {
+        httpRequest('GET', '/c/token_invalido_de_prueba_' . $i);
+    }
+    $resBlockedTokenScan = httpRequest('GET', '/c/token_invalido_de_prueba_999');
+    assertHttp("Rate limiting en /c/<token> bloquea escaneo abusivo de tokens inválidos con HTTP 429",
+        $resBlockedTokenScan['status'] === 429 &&
+        stripos($resBlockedTokenScan['headers'], 'Retry-After:') !== false
+    );
+
+    // 46. Recuperación posterior: tras reiniciar/limpiar límites, la tarjeta válida responde 200
+    $pdo->exec("DELETE FROM `rate_limits` WHERE `action` IN ('public.card_invalid', 'public.card_ip')");
+    $resValidCardRecovered = httpRequest('GET', "/c/{$reassignedToken}");
+    assertHttp("Recuperación de consulta pública tras expiración de rate limit responde 200",
+        $resValidCardRecovered['status'] === 200 &&
+        $resValidCardRecovered['json']['data']['state'] === 'active'
+    );
+
     echo PHP_EOL . "--- Pruebas de Logout y Destrucción de Sesión ---" . PHP_EOL;
 
     // 20. Logout sin CSRF -> 403 Forbidden

@@ -89,6 +89,7 @@ final class Permission
             self::POINTS_ADJUST,
             self::REWARD_REDEEM,
             self::OPERATIONS_EXECUTE,
+            self::CARD_ASSIGN,
         ],
     ];
 
