@@ -160,4 +160,59 @@ final class BusinessController
             Response::error('Error al remover miembro.', 500);
         }
     }
+
+    public function listModules(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $authzService = new AuthorizationService();
+            $authzService->requirePermission($session['user_id'], $businessId, Permission::BUSINESS_VIEW);
+
+            $capabilityService = new \App\Modules\Loyalty\CapabilityService();
+            $modules = $capabilityService->getBusinessModules($businessId);
+
+            Response::success('Moduli del commercio recuperati con successo.', [
+                'data' => $modules,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero dei moduli del commercio.', 500);
+        }
+    }
+
+    public function updateModules(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $authzService = new AuthorizationService();
+            $authzService->requirePermission($session['user_id'], $businessId, Permission::SETTINGS_MANAGE);
+
+            $body = $request->getJsonBody();
+            $capabilityService = new \App\Modules\Loyalty\CapabilityService();
+
+            if (isset($body['module_code']) && isset($body['is_enabled'])) {
+                $capabilityService->setBusinessModule($businessId, (string) $body['module_code'], (bool) $body['is_enabled']);
+            } elseif (isset($body['modules']) && is_array($body['modules'])) {
+                foreach ($body['modules'] as $modCode => $enabled) {
+                    $capabilityService->setBusinessModule($businessId, (string) $modCode, (bool) $enabled);
+                }
+            } else {
+                Response::error('Formato richiesta non valido.', 422);
+            }
+
+            $updated = $capabilityService->getBusinessModules($businessId);
+
+            Response::success('Moduli aggiornati con successo.', [
+                'data' => $updated,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'aggiornamento dei moduli.', 500);
+        }
+    }
 }

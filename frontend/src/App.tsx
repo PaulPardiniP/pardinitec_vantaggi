@@ -1,12 +1,14 @@
-import './App.css'
+import { RouterProvider } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { router } from './router';
+import './styles/app.css';
 
-function App() {
+export function App() {
   return (
-    <main className="container">
-      <h1 className="title">Pardinitec Vantaggi</h1>
-      <p className="subtitle">Sistema in preparazione</p>
-    </main>
-  )
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;

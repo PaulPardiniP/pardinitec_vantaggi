@@ -144,6 +144,14 @@ if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/members/(\d+)
     $businessController->removeMember($request, (int) $matches[1], (int) $matches[2]);
 }
 
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/modules$#', $cleanPath, $matches)) {
+    $businessController->listModules($request, (int) $matches[1]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/modules$#', $cleanPath, $matches)) {
+    $businessController->updateModules($request, (int) $matches[1]);
+}
+
 // Rutas de Tarjetas Físicas del Negocio (Módulo Cards)
 $cardController = new CardController();
 
@@ -235,6 +243,10 @@ $credentialController = new CredentialController();
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/credentials$#', $cleanPath, $matches)) {
     $credentialController->issue($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/credentials$#', $cleanPath, $matches)) {
+    $credentialController->listForAccount($request, (int) $matches[1], (int) $matches[2]);
 }
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/revoke$#', $cleanPath, $matches)) {

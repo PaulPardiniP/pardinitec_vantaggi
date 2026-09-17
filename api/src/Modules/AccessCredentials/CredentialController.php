@@ -73,6 +73,25 @@ final class CredentialController
         }
     }
 
+    public function listForAccount(Request $request, int $businessId, int $loyaltyAccountId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_VIEW);
+
+            $credentials = $this->credentialService->getCredentialsForAccount($businessId, $loyaltyAccountId);
+
+            Response::success('Credenziali recuperate con successo.', [
+                'data' => $credentials,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Error al recuperar credenciales de la cuenta.', 500);
+        }
+    }
+
     public function revoke(Request $request, int $businessId, int $credentialId): void
     {
         $session = $this->authenticate($request);

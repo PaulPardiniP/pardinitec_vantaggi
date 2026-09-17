@@ -102,6 +102,29 @@ final class BusinessService
      */
     public function listUserBusinesses(int $userId): array
     {
+        if ($this->auth->isSuperAdmin($userId)) {
+            $stmt = $this->pdo->query("
+                SELECT b.`id`, b.`name`, b.`slug`, b.`tax_id`, b.`status`, b.`self_registration_enabled`, 'super_admin' AS `role`, b.`created_at` AS joined_at
+                FROM `businesses` b
+                WHERE b.`status` = 'active'
+                ORDER BY b.`name` ASC
+            ");
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            return array_map(static function (array $row): array {
+                return [
+                    'id' => (int) $row['id'],
+                    'name' => (string) $row['name'],
+                    'slug' => (string) $row['slug'],
+                    'tax_id' => $row['tax_id'] !== null ? (string) $row['tax_id'] : null,
+                    'role' => (string) $row['role'],
+                    'status' => (string) $row['status'],
+                    'self_registration_enabled' => (bool) $row['self_registration_enabled'],
+                    'joined_at' => (string) $row['joined_at'],
+                ];
+            }, $rows ?: []);
+        }
+
         $stmt = $this->pdo->prepare("
             SELECT b.`id`, b.`name`, b.`slug`, b.`tax_id`, b.`status`, b.`self_registration_enabled`, bm.`role`, bm.`created_at` AS joined_at
             FROM `businesses` b

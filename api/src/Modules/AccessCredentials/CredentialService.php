@@ -202,6 +202,37 @@ final class CredentialService
     }
 
     /**
+     * Obtiene todas las credenciales asociadas a una cuenta de fidelización.
+     *
+     * @return array<int, array{id: int, business_id: int, loyalty_account_id: int, card_id: ?int, type: string, status: string, issued_at: string}>
+     */
+    public function getCredentialsForAccount(int $businessId, int $loyaltyAccountId): array
+    {
+        $stmt = $this->pdo->prepare("
+            SELECT `id`, `business_id`, `loyalty_account_id`, `card_id`, `type`, `status`, `issued_at`
+            FROM `access_credentials`
+            WHERE `business_id` = :business_id
+              AND `loyalty_account_id` = :account_id
+            ORDER BY `id` DESC
+        ");
+        $stmt->execute([
+            'business_id' => $businessId,
+            'account_id' => $loyaltyAccountId,
+        ]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return array_map(static fn(array $r) => [
+            'id' => (int) $r['id'],
+            'business_id' => (int) $r['business_id'],
+            'loyalty_account_id' => (int) $r['loyalty_account_id'],
+            'card_id' => $r['card_id'] !== null ? (int) $r['card_id'] : null,
+            'type' => (string) $r['type'],
+            'status' => (string) $r['status'],
+            'issued_at' => (string) $r['issued_at'],
+        ], $rows);
+    }
+
+    /**
      * Obtiene la credencial física activa asociada a una tarjeta.
      */
     public function getPhysicalCredentialForCard(int $cardId): ?array
