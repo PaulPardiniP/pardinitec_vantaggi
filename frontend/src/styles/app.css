@@ -1,4 +1,4 @@
-﻿@import './theme.css';
+@import './theme.css';
 
 /* Layout Elements */
 .app-container {
@@ -161,13 +161,14 @@
   letter-spacing: 0.05em;
 }
 
-.badge-primary { background: var(--color-primary-light); color: var(--color-primary); }
+.badge-primary { background: var(--color-primary-light); color: var(--color-primary); border: 1px solid var(--color-primary-border); }
+.badge-secondary { background: var(--color-secondary-blue-light); color: var(--color-secondary-blue); border: 1px solid var(--color-vantaggi-border); }
 .badge-success { background: var(--color-success-light); color: var(--color-success); }
 .badge-warning { background: var(--color-warning-light); color: var(--color-warning); }
 .badge-danger { background: var(--color-danger-light); color: var(--color-danger); }
-.badge-punti { background: var(--color-punti-bg); color: var(--color-punti); border: 1px solid var(--color-punti); }
-.badge-vantaggi { background: var(--color-vantaggi-bg); color: var(--color-vantaggi); border: 1px solid var(--color-vantaggi); }
-.badge-vip { background: var(--color-vip-bg); color: var(--color-vip); border: 1px solid var(--color-vip); }
+.badge-punti { background: var(--color-punti-bg); color: var(--color-punti); border: 1px solid var(--color-punti-accent); }
+.badge-vantaggi { background: var(--color-vantaggi-bg); color: var(--color-vantaggi); border: 1px solid var(--color-secondary-blue); }
+.badge-vip { background: var(--color-vip-light-bg); color: var(--color-vip); border: 1px solid var(--color-vip-accent); }
 
 /* Buttons */
 .btn {
@@ -393,55 +394,115 @@
   to { transform: rotate(360deg); }
 }
 
-/* Public Card Styles */
+/* Public Card & Preview Styles - Mobile-First (from 320px up to desktop) */
 .public-card-container {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 1.5rem;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  padding: 1rem 0.5rem;
+  background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 50%, #eff6ff 100%);
+  box-sizing: border-box;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+@media (min-width: 640px) {
+  .public-card-container {
+    padding: 2rem 1.5rem;
+  }
 }
 
 .public-card-box {
   width: 100%;
-  max-width: 480px;
+  max-width: 100%;
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   border: 1px solid var(--color-border);
+  box-sizing: border-box;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 480px) {
+  .public-card-box {
+    max-width: 480px;
+  }
+}
+
+@media (min-width: 768px) {
+  .public-card-box {
+    max-width: 520px;
+  }
 }
 
 .public-card-header {
-  padding: 1.5rem;
-  background: #0284c7;
+  padding: 1.25rem 1rem;
+  background: var(--color-primary);
   color: white;
   text-align: center;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
-.public-card-header.header-punti { background: linear-gradient(135deg, #d97706, #b45309); }
-.public-card-header.header-vantaggi { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
-.public-card-header.header-vip { background: linear-gradient(135deg, #7c3aed, #6d28d9); }
+@media (min-width: 640px) {
+  .public-card-header {
+    padding: 1.5rem;
+  }
+}
+
+.public-card-header.header-punti {
+  background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 70%, #ea580c 100%);
+}
+.public-card-header.header-vantaggi {
+  background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 60%, #2563eb 100%);
+}
+.public-card-header.header-vip {
+  background: linear-gradient(135deg, #1e1b4b 0%, #2e1065 40%, #4c1d95 80%, #78350f 100%);
+}
+
+.card-preview-banner {
+  background: linear-gradient(135deg, #f5f3ff 0%, #eff6ff 100%);
+  border: 2px dashed var(--color-primary-border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
 
 .public-card-body {
-  padding: 1.5rem;
+  padding: 1rem 0.85rem;
+  box-sizing: border-box;
+}
+
+@media (min-width: 640px) {
+  .public-card-body {
+    padding: 1.5rem;
+  }
 }
 
 .balance-display {
   text-align: center;
-  padding: 1.25rem;
+  padding: 1rem;
   background: #f8fafc;
   border-radius: var(--radius-md);
   margin-bottom: 1.25rem;
 }
 
 .balance-value {
-  font-size: 2.5rem;
+  font-size: 2.25rem;
   font-weight: 800;
   color: var(--color-text);
   line-height: 1;
+}
+
+@media (min-width: 640px) {
+  .balance-value {
+    font-size: 2.75rem;
+  }
 }
 
 .balance-label {
@@ -466,4 +527,51 @@
   background: var(--color-primary);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
+}
+
+/* Big tactile touch button */
+.btn-touch {
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.btn-touch:active {
+  transform: scale(0.98);
+}
+
+/* Stampa pulita del tagliando della carta digitale (Zero PII) */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-card-ticket, #printable-card-ticket * {
+    visibility: visible !important;
+  }
+  #printable-card-ticket {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+    padding: 1.5rem;
+    border: 2px dashed #0f172a;
+    border-radius: 8px;
+    text-align: center;
+    background: #ffffff;
+    color: #000000;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
 }

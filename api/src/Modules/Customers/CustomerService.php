@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Customers;
 
+use App\Core\Audit\AuditLogger;
 use App\Core\Auth\ValidationException;
 use App\Core\Database\Connection;
 use App\Modules\AccessCredentials\CredentialService;
@@ -17,15 +18,18 @@ final class CustomerService
     private PDO $pdo;
     private LoyaltyService $loyaltyService;
     private CredentialService $credentialService;
+    private AuditLogger $auditLogger;
 
     public function __construct(
         ?PDO $pdo = null,
         ?LoyaltyService $loyaltyService = null,
-        ?CredentialService $credentialService = null
+        ?CredentialService $credentialService = null,
+        ?AuditLogger $auditLogger = null
     ) {
         $this->pdo = $pdo ?? Connection::get();
         $this->loyaltyService = $loyaltyService ?? new LoyaltyService($this->pdo);
         $this->credentialService = $credentialService ?? new CredentialService($this->pdo);
+        $this->auditLogger = $auditLogger ?? new AuditLogger($this->pdo);
     }
 
     /**
@@ -145,7 +149,7 @@ final class CustomerService
      *
      * @return array{customer: array, consents: array, loyalty_account: array, access_credential: array, token: string, public_url: string}
      */
-    public function onboardCustomer(int $businessId, array $data): array
+    public function onboardCustomer(int $businessId, array $data, ?int $actorUserId = null): array
     {
         // 1. Validar consentimiento de privacidad obligatorio antes de abrir transacción
         $privacyAccepted = filter_var($data['privacy_accepted'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -158,11 +162,20 @@ final class CustomerService
         // 2. Validar campos del cliente
         $input = $this->validateCustomerInput($data);
 
-        // 3. Resolver perfil de fidelización (por defecto 'punti')
-        $profileCode = trim((string) ($data['card_profile_code'] ?? $data['card_profile'] ?? 'punti'));
-        $profile = $this->loyaltyService->getProfileByCode($profileCode);
+        // 3. Resolver perfil de fidelización (por ID, código, o por defecto 'punti')
+        $profile = null;
+        if (!empty($data['card_profile_id'])) {
+            $profile = $this->loyaltyService->getProfileById((int) $data['card_profile_id']);
+        } elseif (!empty($data['card_profile_code']) || !empty($data['card_profile'])) {
+            $code = (string) ($data['card_profile_code'] ?? $data['card_profile']);
+            $profile = $this->loyaltyService->getProfileByCode($code);
+        } else {
+            $profile = $this->loyaltyService->getProfileByCode('punti');
+        }
+
         if (!$profile) {
-            throw new InvalidArgumentException("Perfil de fidelización inválido o inactivo: '{$profileCode}'.");
+            $identifier = $data['card_profile_id'] ?? ($data['card_profile_code'] ?? ($data['card_profile'] ?? 'punti'));
+            throw new InvalidArgumentException("Perfil de fidelización inválido o inactivo: '{$identifier}'.");
         }
 
         // 4. Iniciar Transacción PDO Atómica
@@ -214,7 +227,21 @@ final class CustomerService
             // E. Emitir credencial digital (32 bytes aleatorios, guarda SHA-256 en DB)
             $credential = $this->credentialService->issueDigitalCredential($businessId, $account['id']);
 
-            // F. Confirmar transacción
+            // F. Registrar auditoría mínima sin PII (Regla 6)
+            $this->auditLogger->log(
+                'customer.onboard',
+                'customers',
+                $customerId,
+                [
+                    'card_profile' => $profile['code'],
+                    'privacy_accepted' => true,
+                    'marketing_accepted' => $marketingAccepted,
+                ],
+                $actorUserId,
+                $businessId
+            );
+
+            // G. Confirmar transacción
             $this->pdo->commit();
 
             return [
@@ -484,6 +511,41 @@ final class CustomerService
     }
 
     /**
+     * Otorga explícitamente un nuevo consentimiento de marketing para un cliente.
+     * Crea un nuevo registro histórico sin sobrescribir ni eliminar los eventos anteriores.
+     * Cero mutaciones de credenciales ni QR.
+     */
+    public function grantMarketingConsent(
+        int $businessId,
+        int $customerId,
+        string $source = 'in_person',
+        string $privacyPolicyVersion = 'v1.0',
+        ?int $actorUserId = null
+    ): array {
+        // Verificar que el cliente existe en el negocio
+        $this->getCustomer($businessId, $customerId);
+
+        $consent = $this->recordConsent($businessId, $customerId, 'marketing', 'granted', $source, $privacyPolicyVersion);
+
+        if ($actorUserId !== null) {
+            $this->auditLogger->log(
+                'customer.consent_granted',
+                'customers',
+                $customerId,
+                [
+                    'consent_type' => 'marketing',
+                    'source' => $source,
+                    'text_version' => $privacyPolicyVersion,
+                ],
+                $actorUserId,
+                $businessId
+            );
+        }
+
+        return $consent;
+    }
+
+    /**
      * Obtiene el historial y estado consolidado de consentimientos de un cliente.
      *
      * @return array<string, mixed>
@@ -530,5 +592,150 @@ final class CustomerService
                 ];
             }, $records),
         ];
+    }
+
+    public function exportCustomerData(int $businessId, int $customerId): array
+    {
+        $customer = $this->getCustomer($businessId, $customerId);
+        
+        $consents = $this->pdo->prepare("SELECT `type`, IF(`status` = 'granted', 1, 0) as `is_granted`, `updated_at` FROM `consents` WHERE `customer_id` = ?");
+        $consents->execute([$customerId]);
+        $customer['consents'] = $consents->fetchAll(\PDO::FETCH_ASSOC);
+        
+        $accounts = $this->pdo->prepare("SELECT `id`, `card_profile_id`, `balance`, `status`, `created_at` FROM `loyalty_accounts` WHERE `customer_id` = ?");
+        $accounts->execute([$customerId]);
+        $customer['accounts'] = $accounts->fetchAll(\PDO::FETCH_ASSOC);
+        
+        $log = $this->pdo->prepare("SELECT `action`, `meta`, `created_at` FROM `audit_logs` WHERE `resource` = 'customers' AND `resource_id` = ?");
+        $log->execute([$customerId]);
+        $customer['audit_logs'] = $log->fetchAll(\PDO::FETCH_ASSOC);
+        
+        return $customer;
+    }
+
+    public function anonymizeCustomer(int $businessId, int $customerId, ?int $actorUserId): void
+    {
+        try {
+            $this->pdo->beginTransaction();
+            $customer = $this->getCustomer($businessId, $customerId);
+            
+            $anonEmail = "anon_{$customerId}@anonymized.local";
+            $anonPhone = "0000000000";
+            
+            $upd = $this->pdo->prepare("
+                UPDATE `customers`
+                SET `first_name` = 'Anonimizado', `last_name` = 'Anonimizado', `email` = ?, `phone` = ? WHERE `id` = ? AND `business_id` = ?
+            ");
+            $upd->execute([$anonEmail, $anonPhone, $customerId, $businessId]);
+            
+            $audit = $this->pdo->prepare("
+                INSERT INTO `audit_logs` (`business_id`, `actor_user_id`, `action`, `resource`, `resource_id`, `created_at`)
+                VALUES (?, ?, 'customer.anonymized', 'customers', ?, UTC_TIMESTAMP())
+            ");
+            $audit->execute([$businessId, $actorUserId, $customerId]);
+            
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Añade un nuevo perfil de fidelización independiente a un cliente existente,
+     * emitiendo su credencial digital de forma atómica y registrando auditoría sin PII.
+     *
+     * @return array{loyalty_account: array, access_credential: array, token: string, public_url: string}
+     */
+    public function addAccountToCustomer(int $businessId, int $customerId, string|int $profileIdOrCode, ?int $actorUserId = null): array
+    {
+        // Validar que el cliente pertenezca al comercio
+        $customer = $this->getCustomer($businessId, $customerId);
+
+        $this->pdo->beginTransaction();
+        try {
+            $account = $this->loyaltyService->createAccount($businessId, $customerId, $profileIdOrCode);
+
+            if (!empty($account['upgraded'])) {
+                // Cuenta estándar ampliada de Punti a Vantaggi: conserva credencial, QR y token existentes
+                $credStmt = $this->pdo->prepare("
+                    SELECT `id`, `type`, `status`, `issued_at`
+                    FROM `access_credentials`
+                    WHERE `business_id` = :business_id
+                      AND `loyalty_account_id` = :account_id
+                      AND `status` = 'active'
+                    ORDER BY `id` DESC
+                    LIMIT 1
+                ");
+                $credStmt->execute([
+                    'business_id' => $businessId,
+                    'account_id' => $account['id'],
+                ]);
+                $existingCred = $credStmt->fetch(PDO::FETCH_ASSOC);
+
+                $this->auditLogger->log(
+                    'loyalty_account.upgrade',
+                    'loyalty_accounts',
+                    $account['id'],
+                    [
+                        'customer_id' => $customerId,
+                        'previous_profile' => 'punti',
+                        'new_profile' => 'vantaggi',
+                    ],
+                    $actorUserId,
+                    $businessId
+                );
+
+                $this->pdo->commit();
+
+                return [
+                    'upgraded' => true,
+                    'loyalty_account' => $account,
+                    'access_credential' => $existingCred ?: [
+                        'id' => null,
+                        'type' => 'digital',
+                        'status' => 'active',
+                        'issued_at' => gmdate('Y-m-d H:i:s'),
+                    ],
+                    'token' => null,
+                    'public_url' => null,
+                ];
+            }
+
+            // Nueva cuenta creada (Punti inicial, Vantaggi inicial o VIP independiente): emite nueva credencial
+            $credential = $this->credentialService->issueDigitalCredential($businessId, $account['id']);
+
+            $this->auditLogger->log(
+                'loyalty_account.create',
+                'loyalty_accounts',
+                $account['id'],
+                [
+                    'customer_id' => $customerId,
+                    'card_profile' => $account['profile_code'],
+                ],
+                $actorUserId,
+                $businessId
+            );
+
+            $this->pdo->commit();
+
+            return [
+                'upgraded' => false,
+                'loyalty_account' => $account,
+                'access_credential' => [
+                    'id' => $credential['id'],
+                    'type' => 'digital',
+                    'status' => 'active',
+                    'issued_at' => $credential['issued_at'],
+                ],
+                'token' => $credential['token'],
+                'public_url' => "/c/{$credential['token']}",
+            ];
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
     }
 }

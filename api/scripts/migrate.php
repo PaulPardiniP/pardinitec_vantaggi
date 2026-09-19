@@ -3,12 +3,20 @@
 declare(strict_types=1);
 
 use App\Core\Database\Migrator;
+use App\Core\Database\Connection;
 
 require_once __DIR__ . '/../bootstrap.php';
 
 $action = $argv[1] ?? 'migrate';
 
 try {
+    $pdo = Connection::get();
+    $dbName = (string) $pdo->query("SELECT DATABASE()")->fetchColumn();
+    $isTesting = (getenv('APP_ENV') === 'testing' || getenv('VANTAGGI_TESTING') === '1');
+    if ($isTesting && $dbName !== 'pardinitec_vantaggi_test') {
+        throw new RuntimeException("ERROR DE SEGURIDAD: Ambiente de testing activo pero DATABASE() es '{$dbName}', se esperaba 'pardinitec_vantaggi_test'.");
+    }
+
     $migrator = new Migrator();
 
     if ($action === 'status') {

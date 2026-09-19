@@ -8,6 +8,7 @@ use App\Core\Http\Request;
 use App\Core\Http\Response;
 use App\Core\Security\Csrf;
 use App\Core\Security\RateLimiter;
+use App\Core\Security\Totp;
 use InvalidArgumentException;
 use Throwable;
 
@@ -109,14 +110,17 @@ final class AuthController
             $cookieName = $this->authService->getSessionManager()->getCookieName();
             $sessionId = $request->getCookie($cookieName);
 
-            $session = $this->authService->getCurrentSession($sessionId);
+            $session = $this->authService->getCurrentSession($sessionId, true);
             if ($session === null) {
                 Response::error('No autenticado o sesión expirada.', 401);
             }
 
+            $user = $session['user'];
+            $user['session_state'] = $session['state'];
+
             Response::success('Sesión activa.', [
                 'data' => [
-                    'user' => $session['user'],
+                    'user' => $user,
                     'csrf_token' => $session['csrf_token'],
                 ],
             ], 200);
@@ -131,7 +135,7 @@ final class AuthController
             $cookieName = $this->authService->getSessionManager()->getCookieName();
             $sessionId = $request->getCookie($cookieName);
 
-            $session = $this->authService->getCurrentSession($sessionId);
+            $session = $this->authService->getCurrentSession($sessionId, true);
             if ($session === null) {
                 Response::error('No autenticado.', 401);
             }
@@ -152,12 +156,12 @@ final class AuthController
             $cookieName = $this->authService->getSessionManager()->getCookieName();
             $sessionId = $request->getCookie($cookieName);
 
-            $session = $this->authService->getCurrentSession($sessionId);
+            $session = $this->authService->getCurrentSession($sessionId, true);
             if ($session === null) {
                 Response::error('No hay una sesión activa para cerrar.', 401);
             }
 
-            // Verificación CSRF obligatoria para logout (operación con efecto de estado)
+            // Verificación CSRF obligatoria para logout
             $submittedCsrf = $request->getHeader('x-csrf-token') ?? ($request->getJsonBody()['_csrf_token'] ?? null);
 
             if (!Csrf::verify($session['csrf_token'], $submittedCsrf)) {
@@ -170,5 +174,168 @@ final class AuthController
         } catch (Throwable $e) {
             Response::error('Error al cerrar la sesión.', 500);
         }
+    }
+
+    public function setup2fa(Request $request): void
+    {
+        $cookieName = $this->authService->getSessionManager()->getCookieName();
+        $sessionId = $request->getCookie($cookieName);
+
+        $session = $this->authService->getCurrentSession($sessionId, true);
+        if ($session === null) {
+            Response::error('No autenticado o sesión expirada.', 401);
+        }
+        $user = $session['user'];
+
+        $rateKey = $request->getClientIp() . ':2fa:' . ($user['id'] ?? 'none');
+        $check = $this->rateLimiter->check('auth.2fa', $rateKey, 10, 60);
+        if (!$check['allowed']) {
+            Response::error('Demasiados intentos', 429, [], ['Retry-After' => (string) $check['retry_after']]);
+        }
+
+        $pdo = \App\Core\Database\Connection::get();
+
+        // Reutilizar secreto pendiente si ya existe uno sin activar
+        $stmt = $pdo->prepare("SELECT `secret_encrypted` FROM `totp_secrets` WHERE `user_id` = ? AND `is_active` = 0");
+        $stmt->execute([$user['id']]);
+        $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        $secret = null;
+        if ($existing && !empty($existing['secret_encrypted'])) {
+            try {
+                $secret = Totp::decryptSecret((string) $existing['secret_encrypted']);
+            } catch (\Throwable $e) {
+                $secret = null;
+            }
+        }
+
+        if (!$secret) {
+            $secret = Totp::generateSecret();
+            $encrypted = Totp::encryptSecret($secret);
+
+            $stmt = $pdo->prepare("
+                INSERT INTO `totp_secrets` (`user_id`, `secret_encrypted`, `is_active`, `created_at`)
+                VALUES (?, ?, 0, UTC_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE `secret_encrypted` = ?, `is_active` = 0
+            ");
+            $stmt->execute([$user['id'], $encrypted, $encrypted]);
+        }
+
+        $issuer = $_ENV['TOTP_ISSUER'] ?? 'PardinitecVantaggi';
+        $uri = Totp::getProvisioningUri($secret, $user['email'], $issuer);
+
+        Response::success('2FA Setup', [
+            'data' => [
+                'uri' => $uri,
+                'secret' => $secret,
+            ],
+            'uri' => $uri,
+            'secret' => $secret,
+        ]);
+    }
+
+    public function verify2faSetup(Request $request): void
+    {
+        $cookieName = $this->authService->getSessionManager()->getCookieName();
+        $sessionId = $request->getCookie($cookieName);
+
+        $session = $this->authService->getCurrentSession($sessionId, true);
+        if ($session === null) {
+            Response::error('No autenticado o sesión expirada.', 401);
+        }
+        $user = $session['user'];
+
+        $rateKey = $request->getClientIp() . ':2fa:' . ($user['id'] ?? 'none');
+        $check = $this->rateLimiter->check('auth.2fa', $rateKey, 10, 60);
+        if (!$check['allowed']) {
+            Response::error('Demasiados intentos', 429, [], ['Retry-After' => (string) $check['retry_after']]);
+        }
+
+        $code = trim((string) ($request->getJsonBody()['code'] ?? ''));
+
+        $pdo = \App\Core\Database\Connection::get();
+        $stmt = $pdo->prepare("SELECT * FROM `totp_secrets` WHERE `user_id` = ? AND `is_active` = 0");
+        $stmt->execute([$user['id']]);
+        $totp = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        if (!$totp) {
+            Response::error('No hay configuración 2FA pendiente', 400);
+        }
+
+        try {
+            $secret = Totp::decryptSecret((string) $totp['secret_encrypted']);
+        } catch (\Throwable $e) {
+            $secret = (string) $totp['secret_encrypted'];
+        }
+
+        if (!Totp::verify((string)$secret, $code)) {
+            Response::error('Código TOTP inválido', 400);
+        }
+
+        $recoveryCodes = Totp::generateRecoveryCodes();
+        $hash = Totp::hashRecoveryCodes($recoveryCodes);
+
+        $upd = $pdo->prepare("UPDATE `totp_secrets` SET `is_active` = 1, `activated_at` = UTC_TIMESTAMP(), `recovery_codes_hash` = ? WHERE `id` = ?");
+        $upd->execute([json_encode($hash), $totp['id']]);
+
+        $pdo->prepare("UPDATE `users` SET `totp_enabled` = 1 WHERE `id` = ?")->execute([$user['id']]);
+
+        // Activar la sesión actual
+        $pdo->prepare("UPDATE `sessions` SET `state` = 'active' WHERE `id` = ?")->execute([$session['token_hash']]);
+
+        Response::success('2FA Activado con éxito', [
+            'data' => [
+                'recovery_codes' => $recoveryCodes,
+                'user' => [
+                    'id' => $user['id'],
+                    'email' => $user['email'],
+                    'name' => $user['name'],
+                    'is_super_admin' => (bool) $user['is_super_admin'],
+                    'totp_enabled' => true,
+                    'session_state' => 'active',
+                ],
+            ],
+            'recovery_codes' => $recoveryCodes,
+            'user' => [
+                'id' => $user['id'],
+                'email' => $user['email'],
+                'name' => $user['name'],
+                'is_super_admin' => (bool) $user['is_super_admin'],
+                'totp_enabled' => true,
+                'session_state' => 'active',
+            ],
+        ]);
+    }
+
+    public function challenge2fa(Request $request): void
+    {
+        $cookieName = $this->authService->getSessionManager()->getCookieName();
+        $sessionId = $request->getCookie($cookieName);
+
+        $rateKey = $request->getClientIp() . ':2fa:' . (string) $sessionId;
+        $check = $this->rateLimiter->check('auth.2fa', $rateKey, 10, 60);
+        if (!$check['allowed']) {
+            Response::error('Demasiados intentos', 429, [], ['Retry-After' => (string) $check['retry_after']]);
+        }
+
+        $code = trim((string) ($request->getJsonBody()['code'] ?? ''));
+
+        if (str_contains($code, '-')) {
+            $ok = $this->authService->consumeRecoveryCode((string)$sessionId, $code);
+        } else {
+            $ok = $this->authService->verifyTotpChallenge((string)$sessionId, $code);
+        }
+
+        if ($ok) {
+            $session = $this->authService->getCurrentSession($sessionId, true);
+            Response::success('2FA Verificado', [
+                'data' => [
+                    'user' => array_merge($session['user'], ['session_state' => 'active', 'totp_enabled' => true]),
+                    'csrf_token' => $session['csrf_token']
+                ]
+            ]);
+        }
+
+        Response::error('Código 2FA o de recuperación inválido', 401);
     }
 }

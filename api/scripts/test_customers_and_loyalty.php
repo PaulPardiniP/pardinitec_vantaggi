@@ -466,6 +466,182 @@ assertTest("Sustitución de credencial digital activa mediante rotate exitosa",
     $puntiCredRotated['status'] === 'active'
 );
 
+// 10. Búsqueda Paginada Backend de Clientes, Permisos y Aislamiento Multiempresa
+echo PHP_EOL . "--- 10. Búsqueda Paginada de Clientes, Permisos y Aislamiento Multiempresa ---" . PHP_EOL;
+
+$ts = time();
+$c1 = $customerService->createCustomer($bizA['id'], [
+    'first_name' => "Giovanni_{$ts}",
+    'last_name' => "Verdi_{$ts}",
+    'phone' => "+39333111{$ts}",
+    'email' => "gverdi_{$ts}@example.it",
+    'privacy_accepted' => true,
+]);
+
+$c2 = $customerService->createCustomer($bizA['id'], [
+    'first_name' => "Alessandra_{$ts}",
+    'last_name' => "Ferrari_{$ts}",
+    'phone' => "+39333222{$ts}",
+    'email' => "aferrari_{$ts}@example.it",
+    'privacy_accepted' => true,
+]);
+
+$c3 = $customerService->createCustomer($bizB['id'], [
+    'first_name' => "Giovanni_{$ts}",
+    'last_name' => "Bianchi_{$ts}",
+    'phone' => "+39333333{$ts}",
+    'email' => "gbianchi_{$ts}@example.it",
+    'privacy_accepted' => true,
+]);
+
+// 10.1 Búsqueda por nombre
+$searchName = $customerService->listCustomers($bizA['id'], ['search' => "Giovanni_{$ts}"]);
+assertTest("Búsqueda de clientes por nombre",
+    count($searchName['data']) === 1 && $searchName['data'][0]['first_name'] === "Giovanni_{$ts}"
+);
+
+// 10.2 Búsqueda por apellido
+$searchLastName = $customerService->listCustomers($bizA['id'], ['search' => "Ferrari_{$ts}"]);
+assertTest("Búsqueda de clientes por apellido",
+    count($searchLastName['data']) === 1 && $searchLastName['data'][0]['last_name'] === "Ferrari_{$ts}"
+);
+
+// 10.3 Búsqueda por teléfono
+$searchPhone = $customerService->listCustomers($bizA['id'], ['search' => "+39333111{$ts}"]);
+assertTest("Búsqueda de clientes por teléfono",
+    count($searchPhone['data']) === 1 && $searchPhone['data'][0]['phone'] === "+39333111{$ts}"
+);
+
+// 10.4 Búsqueda por email
+$searchEmail = $customerService->listCustomers($bizA['id'], ['search' => "aferrari_{$ts}@example.it"]);
+assertTest("Búsqueda de clientes por email",
+    count($searchEmail['data']) === 1 && $searchEmail['data'][0]['email'] === "aferrari_{$ts}@example.it"
+);
+
+// 10.5 Paginación y metadatos de total
+$pagedList = $customerService->listCustomers($bizA['id'], [], 1, 1);
+assertTest("Paginación de clientes devuelve metadatos estructurados (page, per_page, total, total_pages)",
+    $pagedList['pagination']['page'] === 1 &&
+    $pagedList['pagination']['per_page'] === 1 &&
+    $pagedList['pagination']['total'] >= 2 &&
+    $pagedList['pagination']['total_pages'] >= 2 &&
+    count($pagedList['data']) === 1
+);
+
+// 10.6 Validación de permiso: usuario sin customer.view es rechazado
+try {
+    $authzService->requirePermission($ownerUserA['id'], $bizA['id'], Permission::CUSTOMER_VIEW);
+    assertTest("Owner de comercio tiene permiso customer.view", true);
+} catch (ForbiddenException $e) {
+    assertTest("Owner de comercio tiene permiso customer.view", false, $e->getMessage());
+}
+
+$nonMemberUser = $authService->register([
+    'name' => 'Outsider User',
+    'email' => "outsider_{$ts}@test.local",
+    'password' => 'Pass123456!'
+]);
+try {
+    $authzService->requirePermission($nonMemberUser['id'], $bizA['id'], Permission::CUSTOMER_VIEW);
+    assertTest("Usuario sin membresía ni permiso recibe 403 Forbidden para ver clientes", false);
+} catch (ForbiddenException $e) {
+    assertTest("Usuario sin membresía ni permiso recibe 403 Forbidden para ver clientes", true, $e->getMessage());
+}
+
+// 10.7 Aislamiento estricto: búsqueda en Biz A nunca devuelve clientes de Biz B aunque coincida el término
+$crossSearch = $customerService->listCustomers($bizA['id'], ['search' => "Giovanni_{$ts}"]);
+$hasForeign = false;
+foreach ($crossSearch['data'] as $cust) {
+    if ($cust['business_id'] !== $bizA['id']) {
+        $hasForeign = true;
+    }
+}
+assertTest("Aislamiento multiempresa: búsqueda nunca devuelve clientes de otro business_id",
+    !$hasForeign && count($crossSearch['data']) === 1 && $crossSearch['data'][0]['business_id'] === $bizA['id']
+);
+
+echo PHP_EOL . "--- 11. Regla Definitiva: Punti -> Vantaggi Upgrade e Independencia VIP ---" . PHP_EOL;
+
+// 11.1 Cliente con solo Punti: al activar Vantaggi, actualiza el mismo conto in-place y conserva saldo/credenciales
+$custUpgrade = $customerService->createCustomer($bizA['id'], [
+    'first_name' => "Luca_{$ts}",
+    'last_name' => 'Upgrade',
+    'email' => "luca_up_{$ts}@test.it",
+    'privacy_accepted' => true,
+]);
+$accPunti = $loyaltyService->createAccount($bizA['id'], $custUpgrade['id'], 'punti');
+$credPunti = $credentialService->issueDigitalCredential($bizA['id'], $accPunti['id']);
+// Simular balance de 50 puntos
+$pdo->prepare("UPDATE `loyalty_accounts` SET `balance` = 50 WHERE `id` = :id")->execute(['id' => $accPunti['id']]);
+
+// Upgrade a Vantaggi
+$accUpgradeRes = $customerService->addAccountToCustomer($bizA['id'], $custUpgrade['id'], 'vantaggi', $ownerUserA['id']);
+assertTest("Ampliación a Vantaggi devuelve flag upgraded = true", $accUpgradeRes['upgraded'] === true);
+assertTest("Ampliación a Vantaggi conserva exactamente el mismo account_id", $accUpgradeRes['loyalty_account']['id'] === $accPunti['id']);
+assertTest("Perfil del conto actualizado a vantaggi", $accUpgradeRes['loyalty_account']['profile_code'] === 'vantaggi');
+assertTest("Saldo de puntos conservado intacto (50)", (int)$accUpgradeRes['loyalty_account']['balance'] === 50);
+assertTest("No se emite nueva credencial ni nuevo token en upgrade", $accUpgradeRes['token'] === null && $accUpgradeRes['public_url'] === null);
+
+// Verificar credencial activa previa sigue siendo la misma
+$activeCreds = $credentialService->getCredentialsForAccount($bizA['id'], $accPunti['id']);
+assertTest("Credencial previa sigue activa y asociada", count($activeCreds) === 1 && $activeCreds[0]['id'] === $credPunti['id']);
+
+// 11.2 Rechazo de activación de Punti cuando ya tiene Vantaggi
+try {
+    $loyaltyService->createAccount($bizA['id'], $custUpgrade['id'], 'punti');
+    assertTest("Rechazo de activación de Punti cuando ya posee Vantaggi", false);
+} catch (InvalidArgumentException $e) {
+    assertTest("Rechazo de activación de Punti cuando ya posee Vantaggi", true, $e->getMessage());
+}
+
+// 11.3 Rechazo de segunda activación de Vantaggi cuando ya tiene Vantaggi
+try {
+    $loyaltyService->createAccount($bizA['id'], $custUpgrade['id'], 'vantaggi');
+    assertTest("Rechazo de segunda activación de Vantaggi", false);
+} catch (InvalidArgumentException $e) {
+    assertTest("Rechazo de segunda activación de Vantaggi", true, $e->getMessage());
+}
+
+// 11.4 Creación de cuenta VIP independiente para el mismo cliente
+$accVipRes = $customerService->addAccountToCustomer($bizA['id'], $custUpgrade['id'], 'vip', $ownerUserA['id']);
+assertTest("Creación de cuenta VIP devuelve upgraded = false", $accVipRes['upgraded'] === false);
+assertTest("Cuenta VIP tiene account_id diferente al estándar", $accVipRes['loyalty_account']['id'] !== $accPunti['id']);
+assertTest("Cuenta VIP genera nueva credencial digital y token", !empty($accVipRes['token']) && !empty($accVipRes['public_url']));
+
+// 11.5 Rechazo de segundo conto VIP
+try {
+    $loyaltyService->createAccount($bizA['id'], $custUpgrade['id'], 'vip');
+    assertTest("Rechazo de segundo conto VIP duplicado", false);
+} catch (InvalidArgumentException $e) {
+    assertTest("Rechazo de segundo conto VIP duplicado", true, $e->getMessage());
+}
+
+// 12. Vista Previa Interna Segura (getAccountPreview)
+echo PHP_EOL . "--- 12. Vista Previa Interna Segura (Sin rotación de credenciales) ---" . PHP_EOL;
+
+$previewPunti = $loyaltyService->getAccountPreview($bizA['id'], $accPunti['id']);
+assertTest("Anteprima Punti: is_preview es true y mode es preview", $previewPunti['is_preview'] === true && $previewPunti['mode'] === 'preview');
+assertTest("Anteprima Punti: incluye business correcto y loyalty_account", $previewPunti['business']['id'] === $bizA['id'] && $previewPunti['loyalty_account']['id'] === $accPunti['id']);
+assertTest("Anteprima Punti: saldo presente (50)", isset($previewPunti['loyalty_account']['balance']) && $previewPunti['loyalty_account']['balance'] === 50);
+assertTest("Anteprima Punti: NO expone tokens planos ni public_token_hash", !isset($previewPunti['token']) && !isset($previewPunti['public_token_hash']));
+
+// Preview de cuenta VIP
+$previewVip = $loyaltyService->getAccountPreview($bizA['id'], $accVipRes['loyalty_account']['id']);
+assertTest("Anteprima VIP: profile_code es vip", $previewVip['loyalty_account']['profile_code'] === 'vip');
+assertTest("Anteprima VIP: is_preview es true", $previewVip['is_preview'] === true);
+
+// Aislamiento Multi-tenant: no se puede previsualizar cuenta de otro business
+try {
+    $loyaltyService->getAccountPreview($bizB['id'], $accPunti['id']);
+    assertTest("Aislamiento multi-tenant en getAccountPreview: rechaza cuenta ajena", false);
+} catch (InvalidArgumentException $e) {
+    assertTest("Aislamiento multi-tenant en getAccountPreview: rechaza cuenta ajena", true, $e->getMessage());
+}
+
+// No se crean credenciales ni se muta la base de datos al consultar preview
+$activeCredsAfter = $credentialService->getCredentialsForAccount($bizA['id'], $accPunti['id']);
+assertTest("getAccountPreview no genera ni muta credenciales en DB", count($activeCredsAfter) === 1 && $activeCredsAfter[0]['id'] === $credPunti['id']);
+
 echo PHP_EOL . "==========================================" . PHP_EOL;
 echo "RESULTADO ETAPA 1 (CUSTOMERS & LOYALTY): {$passedCount} de {$totalTests} pruebas superadas." . PHP_EOL;
 echo "==========================================" . PHP_EOL;
@@ -473,3 +649,5 @@ echo "==========================================" . PHP_EOL;
 if ($passedCount !== $totalTests) {
     exit(1);
 }
+
+

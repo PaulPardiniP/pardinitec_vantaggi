@@ -16,6 +16,12 @@ final class Response
         header('Content-Type: application/json; charset=UTF-8');
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: DENY');
+        header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'");
+        header("Referrer-Policy: strict-origin-when-cross-origin");
+        
+        if (($_ENV['APP_ENV'] ?? '') === 'production') {
+            header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+        }
 
         foreach ($headers as $name => $value) {
             header("{$name}: {$value}");
@@ -39,12 +45,8 @@ final class Response
         );
     }
 
-    public static function error(
-        string $message,
-        int $statusCode = 400,
-        array $errors = [],
-        array $headers = []
-    ): void {
+    public static function error(string $message, int $statusCode = 400, array $errors = [], array $headers = []): void {
+        if (defined('IS_TEST_ENV')) { throw new \RuntimeException($message); }
         $payload = [
             'success' => false,
             'message' => $message,

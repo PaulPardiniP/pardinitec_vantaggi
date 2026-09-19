@@ -407,12 +407,21 @@ final class CardService
                 'business_id' => $businessId,
             ]);
 
-            // 4. Actualizar credencial física vinculándola a la loyalty_account
-            $this->credentialService->updatePhysicalCredentialLinks($cardId, $businessId, $loyaltyAccountId);
+            // 4. Rotar / emitir la credencial física para entregar el nuevo token en claro al activar
+            $existingCred = $this->credentialService->getPhysicalCredentialForCard($cardId);
+            if ($existingCred) {
+                $newCred = $this->credentialService->rotatePhysicalCredentialForCard($cardId, $businessId, $loyaltyAccountId);
+            } else {
+                $newCred = $this->credentialService->issuePhysicalCredential($businessId, $cardId, $loyaltyAccountId);
+            }
 
             $this->pdo->commit();
 
-            return $this->getBusinessCard($businessId, $cardId);
+            $cardData = $this->getBusinessCard($businessId, $cardId);
+            $cardData['token'] = $newCred['token'];
+            $cardData['public_url'] = "/c/{$newCred['token']}";
+
+            return $cardData;
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
@@ -479,12 +488,18 @@ final class CardService
                 'business_id' => $businessId,
             ]);
 
-            // Reactivar credencial física
-            $this->credentialService->reactivatePhysicalCredentialForCard($cardId);
+            // Revocar credencial previa y emitir una nueva credencial física con nuevo token
+            $this->credentialService->revokePhysicalCredentialForCard($cardId);
+            $newCred = $this->credentialService->issuePhysicalCredential($businessId, $cardId, (int) $card['loyalty_account_id']);
 
             $this->pdo->commit();
 
-            return $this->getBusinessCard($businessId, $cardId);
+            $cardData = $this->getBusinessCard($businessId, $cardId);
+            $cardData['token'] = $newCred['token'];
+            $cardData['public_url'] = "/c/{$newCred['token']}";
+            $cardData['requires_reprogramming'] = true;
+
+            return $cardData;
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
@@ -609,13 +624,11 @@ final class CardService
                 $updateCredStmt = $this->pdo->prepare("
                     UPDATE `access_credentials`
                     SET `status` = 'replaced',
-                        `replaced_by_credential_id` = :new_cred_id,
                         `revoked_at` = UTC_TIMESTAMP(),
                         `updated_at` = UTC_TIMESTAMP()
                     WHERE `id` = :old_cred_id
                 ");
                 $updateCredStmt->execute([
-                    'new_cred_id' => $newCred['id'],
                     'old_cred_id' => $oldCred['id'],
                 ]);
             }
@@ -634,7 +647,23 @@ final class CardService
                 'old_id' => $oldCardId,
             ]);
 
-            // 4. Activar nueva tarjeta con la misma loyalty_account
+            // 4. Revocar credencial previa de la nueva tarjeta y emitir nueva credencial física vinculada a la cuenta
+            $this->credentialService->revokePhysicalCredentialForCard($newCardId);
+            $newIssuedCred = $this->credentialService->issuePhysicalCredential($businessId, $newCardId, $loyaltyAccountId);
+
+            if ($oldCred) {
+                $linkStmt = $this->pdo->prepare("
+                    UPDATE `access_credentials`
+                    SET `replaced_by_credential_id` = :new_cred_id
+                    WHERE `id` = :old_cred_id
+                ");
+                $linkStmt->execute([
+                    'new_cred_id' => $newIssuedCred['id'],
+                    'old_cred_id' => $oldCred['id'],
+                ]);
+            }
+
+            // Activar nueva tarjeta con la misma loyalty_account
             $updateNewStmt = $this->pdo->prepare("
                 UPDATE `cards`
                 SET `status` = 'active',
@@ -650,15 +679,14 @@ final class CardService
                 'new_id' => $newCardId,
             ]);
 
-            // Vincular credencial física de la nueva tarjeta a la misma cuenta y comercio
-            $this->credentialService->updatePhysicalCredentialLinks($newCardId, $businessId, $loyaltyAccountId);
-
             // 5. Confirmar la transacción
             $this->pdo->commit();
 
             return [
-                'old_card' => $this->getBusinessCard($businessId, $oldCardId),
-                'new_card' => $this->getBusinessCard($businessId, $newCardId),
+                'old_card'   => $this->getBusinessCard($businessId, $oldCardId),
+                'new_card'   => $this->getBusinessCard($businessId, $newCardId),
+                'token'      => $newIssuedCred['token'],
+                'public_url' => "/c/{$newIssuedCred['token']}",
             ];
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { pointsApi } from '../../api/services';
 import type { LoyaltyProgram, PointsTransaction } from '../../types';
@@ -7,6 +7,7 @@ import { Input } from '../../components/common/Input';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
 import { Pagination } from '../../components/common/Pagination';
+import { EmptyState } from '../../components/common/EmptyState';
 import { generateOperationId } from '../../api/client';
 
 export const PointsPage: React.FC = () => {
@@ -35,7 +36,10 @@ export const PointsPage: React.FC = () => {
   const canAdjust = hasPermission('points.adjust');
 
   const loadData = async () => {
-    if (!activeBusiness) return;
+    if (!activeBusiness) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       const prog = await pointsApi.getProgram(activeBusiness.id);
@@ -93,7 +97,7 @@ export const PointsPage: React.FC = () => {
     setFeedback(null);
     try {
       const res = await pointsApi.adjust(activeBusiness.id, Number(accountId), {
-        points_delta: Number(pointsDelta),
+        points: Number(pointsDelta),
         reason,
         operation_id: generateOperationId(),
       });
@@ -113,6 +117,15 @@ export const PointsPage: React.FC = () => {
   };
 
   if (isLoading) return <Spinner size="lg" text="Caricamento programma punti..." />;
+
+  if (!activeBusiness) {
+    return (
+      <EmptyState
+        title="Nessun commercio selezionato"
+        description="Seleziona un commercio attivo per visualizzare e gestire i punti fedeltà."
+      />
+    );
+  }
 
   const modeLabel =
     program?.mode === 'points_per_amount'

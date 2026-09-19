@@ -16,17 +16,29 @@ final class Connection
     {
     }
 
+    public static function reset(): void
+    {
+        self::$instance = null;
+    }
+
     public static function get(): PDO
     {
         if (self::$instance instanceof PDO) {
             return self::$instance;
         }
 
+        $dbName = $_ENV['DB_NAME'];
+        $appEnv = $_ENV['APP_ENV'] ?? (getenv('APP_ENV') ?: '');
+        $vantaggiTesting = $_ENV['VANTAGGI_TESTING'] ?? (getenv('VANTAGGI_TESTING') ?: '');
+        if ($appEnv === 'testing' || $vantaggiTesting === '1' || $vantaggiTesting === 'true' || defined('VANTAGGI_TESTING')) {
+            $dbName = $_ENV['DB_TEST_NAME'] ?? (str_ends_with($dbName, '_test') ? $dbName : ($dbName . '_test'));
+        }
+
         $dsn = sprintf(
             'mysql:host=%s;port=%s;dbname=%s;charset=%s',
             $_ENV['DB_HOST'],
             $_ENV['DB_PORT'],
-            $_ENV['DB_NAME'],
+            $dbName,
             $_ENV['DB_CHARSET']
         );
 

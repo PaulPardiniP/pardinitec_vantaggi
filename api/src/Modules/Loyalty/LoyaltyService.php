@@ -128,25 +128,77 @@ final class LoyaltyService
             throw new InvalidArgumentException("Perfil de fidelización inválido o inactivo: '{$profileIdOrCode}'.");
         }
 
-        // 3. Prevenir duplicado de cuenta activa para el mismo perfil y cliente
-        $checkStmt = $this->pdo->prepare("
-            SELECT `id` FROM `loyalty_accounts`
-            WHERE `business_id` = :business_id
-              AND `customer_id` = :customer_id
-              AND `card_profile_id` = :profile_id
-              AND `status` = 'active'
-            LIMIT 1
+        // 3. Reglas de Negocio Definitivas (Punti, Vantaggi, VIP):
+        $existingStmt = $this->pdo->prepare("
+            SELECT la.`id`, la.`card_profile_id`, la.`balance`, la.`status`,
+                   cp.`code` AS `profile_code`, cp.`name` AS `profile_name`
+            FROM `loyalty_accounts` la
+            INNER JOIN `card_profiles` cp ON la.`card_profile_id` = cp.`id`
+            WHERE la.`business_id` = :business_id
+              AND la.`customer_id` = :customer_id
+              AND la.`status` = 'active'
         ");
-        $checkStmt->execute([
+        $existingStmt->execute([
             'business_id' => $businessId,
             'customer_id' => $customerId,
-            'profile_id' => $profile['id'],
         ]);
-        if ($checkStmt->fetch()) {
-            throw new InvalidArgumentException("El cliente ya posee una cuenta de fidelización activa para el perfil '{$profile['name']}'.");
+        $existingAccounts = $existingStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $hasVip = false;
+        $standardAccount = null;
+        foreach ($existingAccounts as $acc) {
+            if ($acc['profile_code'] === 'vip') {
+                $hasVip = true;
+            } elseif (in_array($acc['profile_code'], ['punti', 'vantaggi'], true)) {
+                $standardAccount = $acc;
+            }
         }
 
-        // 4. Insertar cuenta de fidelización con saldo inicial 0
+        $targetCode = $profile['code'];
+
+        if ($targetCode === 'vip') {
+            if ($hasVip) {
+                throw new InvalidArgumentException('Il cliente possiede già un conto VIP attivo.');
+            }
+        } elseif ($targetCode === 'punti') {
+            if ($standardAccount !== null) {
+                if ($standardAccount['profile_code'] === 'punti') {
+                    throw new InvalidArgumentException('Il cliente possiede già un conto Punti attivo.');
+                }
+                if ($standardAccount['profile_code'] === 'vantaggi') {
+                    throw new InvalidArgumentException('Il cliente possiede già il profilo Vantaggi attivo, che include tutte le funzioni di Punti.');
+                }
+            }
+        } elseif ($targetCode === 'vantaggi') {
+            if ($standardAccount !== null) {
+                if ($standardAccount['profile_code'] === 'vantaggi') {
+                    throw new InvalidArgumentException('Il cliente possiede già il profilo Vantaggi attivo.');
+                }
+                if ($standardAccount['profile_code'] === 'punti') {
+                    // Ampliación de cuenta estándar Punti -> Vantaggi (mismo account_id, mismo saldo, misma credencial)
+                    $updStmt = $this->pdo->prepare("
+                        UPDATE `loyalty_accounts`
+                        SET `card_profile_id` = :new_profile_id,
+                            `updated_at` = UTC_TIMESTAMP()
+                        WHERE `id` = :account_id AND `business_id` = :business_id
+                    ");
+                    $updStmt->execute([
+                        'new_profile_id' => $profile['id'],
+                        'account_id' => $standardAccount['id'],
+                        'business_id' => $businessId,
+                    ]);
+
+                    $updated = $this->getAccount($businessId, (int) $standardAccount['id']);
+                    if (!$updated) {
+                        throw new InvalidArgumentException('Error al actualizar el perfil de la cuenta.');
+                    }
+                    $updated['upgraded'] = true;
+                    return $updated;
+                }
+            }
+        }
+
+        // 4. Insertar nueva cuenta de fidelización con saldo inicial 0
         $insertStmt = $this->pdo->prepare("
             INSERT INTO `loyalty_accounts` (
                 `business_id`,
@@ -185,6 +237,7 @@ final class LoyaltyService
             'balance' => 0,
             'status' => 'active',
             'created_at' => gmdate('Y-m-d H:i:s'),
+            'upgraded' => false,
         ];
     }
 
@@ -287,5 +340,100 @@ final class LoyaltyService
         ]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Obtiene una vista previa interna segura y autenticada de la carta del cliente.
+     * Cero mutaciones, cero tokens planos, cero PII.
+     *
+     * @return array<string, mixed>
+     */
+    public function getAccountPreview(int $businessId, int $accountId): array
+    {
+        $stmt = $this->pdo->prepare("
+            SELECT la.*, cp.`code` AS `profile_code`, cp.`name` AS `profile_name`,
+                   b.`name` AS `business_name`, b.`slug` AS `business_slug`
+            FROM `loyalty_accounts` la
+            INNER JOIN `card_profiles` cp ON la.`card_profile_id` = cp.`id`
+            INNER JOIN `businesses` b ON la.`business_id` = b.`id`
+            WHERE la.`id` = :id AND la.`business_id` = :business_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'id' => $accountId,
+            'business_id' => $businessId,
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            throw new InvalidArgumentException('Conto di fidelizzazione non trovato.');
+        }
+
+        $cardProfileId = (int) $row['card_profile_id'];
+        $profileCode = (string) $row['profile_code'];
+
+        $capabilityService = new \App\Modules\Loyalty\CapabilityService($this->pdo);
+        $rewardService = new \App\Modules\Rewards\RewardService($this->pdo, $capabilityService);
+        $offerService = new \App\Modules\Offers\OfferService($this->pdo, $capabilityService);
+        $pointsService = new \App\Modules\Points\PointsService($this->pdo, $capabilityService);
+        $programService = new \App\Modules\Points\LoyaltyProgramService($this->pdo);
+
+        $hasPoints = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'points')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'points');
+        $hasRewards = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'rewards')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'rewards');
+        $hasOffers = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers');
+        $hasVipOffers = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers');
+
+        $loyaltyAccountData = [
+            'id' => $accountId,
+            'customer_id' => (int) $row['customer_id'],
+            'profile_code' => $profileCode,
+            'profile_name' => (string) $row['profile_name'],
+            'status' => (string) $row['status'],
+        ];
+        if ($hasPoints) {
+            $loyaltyAccountData['balance'] = (int) $row['balance'];
+        }
+
+        $preview = [
+            'state' => 'active',
+            'mode' => 'preview',
+            'is_preview' => true,
+            'business' => [
+                'id' => $businessId,
+                'name' => (string) $row['business_name'],
+                'slug' => (string) $row['business_slug'],
+            ],
+            'loyalty_account' => $loyaltyAccountData,
+        ];
+
+        if ($hasPoints) {
+            $preview['program'] = $programService->getProgram($businessId);
+            $rawTx = $pointsService->getAccountTransactions($businessId, $accountId, 1, 20)['data'];
+            $preview['recent_transactions'] = array_map(static function (array $tx): array {
+                return [
+                    'id' => (int) $tx['id'],
+                    'points' => (int) $tx['points'],
+                    'points_delta' => (int) $tx['points'],
+                    'type' => (string) $tx['type'],
+                    'reason' => $tx['reason'] !== null ? (string) $tx['reason'] : null,
+                    'created_at' => (string) $tx['created_at'],
+                ];
+            }, $rawTx);
+        }
+
+        if ($hasRewards) {
+            $preview['next_reward'] = $rewardService->getNextAvailableReward($businessId, (int) $row['balance'], $cardProfileId);
+            $preview['rewards'] = $rewardService->listRewards($businessId, true, $cardProfileId);
+        }
+
+        if ($hasOffers || $hasVipOffers) {
+            $preview['offers'] = $offerService->listOffers($businessId, true, $cardProfileId);
+        }
+
+        return $preview;
     }
 }

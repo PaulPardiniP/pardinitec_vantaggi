@@ -1,10 +1,10 @@
-﻿import React from 'react';
+import React from 'react';
 import { NavLink, Outlet, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/common/Button';
 
 export const AdminLayout: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, activeBusiness, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -24,9 +24,15 @@ export const AdminLayout: React.FC = () => {
         </div>
 
         <div className="nav-actions">
-          <Link to="/dashboard" className="btn btn-outline btn-sm">
-            ← Vista Commerciante
-          </Link>
+          {activeBusiness ? (
+            <Link to="/dashboard" className="btn btn-outline btn-sm">
+              ← Vista Commerciante ({activeBusiness.name})
+            </Link>
+          ) : (
+            <Link to="/admin/businesses" className="btn btn-outline btn-sm" title="Seleziona un commercio dall'elenco per operare come esercente">
+              🏪 Seleziona Commercio
+            </Link>
+          )}
           <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{user?.email}</span>
           <Button variant="secondary" size="sm" onClick={handleLogout}>
             Esci

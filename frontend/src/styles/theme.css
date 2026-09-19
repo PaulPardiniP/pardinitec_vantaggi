@@ -1,13 +1,20 @@
-﻿:root {
+:root {
   --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --color-bg: #f8fafc;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
   --color-text: #0f172a;
   --color-text-muted: #64748b;
-  --color-primary: #0284c7;
-  --color-primary-hover: #0369a1;
-  --color-primary-light: #e0f2fe;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #6d28d9;
+  --color-primary-light: #f5f3ff;
+  --color-primary-dark: #5b21b6;
+  --color-primary-border: #ddd6fe;
+
+  --color-secondary-blue: #2563eb;
+  --color-secondary-blue-hover: #1d4ed8;
+  --color-secondary-blue-light: #eff6ff;
+
   --color-success: #16a34a;
   --color-success-light: #dcfce7;
   --color-danger: #dc2626;
@@ -15,12 +22,28 @@
   --color-danger-light: #fee2e2;
   --color-warning: #d97706;
   --color-warning-light: #fef3c7;
-  --color-punti: #d97706;
-  --color-punti-bg: #fffbeb;
-  --color-vantaggi: #2563eb;
-  --color-vantaggi-bg: #eff6ff;
-  --color-vip: #7c3aed;
-  --color-vip-bg: #f5f3ff;
+
+  /* Card Profile Themes:
+     - Punti: Violet base with subtle orange accents
+     - Vantaggi: Primary violet with blue details
+     - VIP: Dark violet with discreet gold/amber details
+  */
+  --color-punti: #7c3aed;
+  --color-punti-accent: #ea580c;
+  --color-punti-bg: #f5f3ff;
+  --color-punti-border: #fed7aa;
+
+  --color-vantaggi: #7c3aed;
+  --color-vantaggi-accent: #2563eb;
+  --color-vantaggi-bg: #f5f3ff;
+  --color-vantaggi-border: #bfdbfe;
+
+  --color-vip: #4c1d95;
+  --color-vip-accent: #d97706;
+  --color-vip-bg: #2e1065;
+  --color-vip-light-bg: #faf5ff;
+  --color-vip-border: #fde68a;
+
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);

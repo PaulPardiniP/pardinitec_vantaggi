@@ -195,8 +195,71 @@ try {
     assertBiz("Usuario revocado ya no tiene acceso", true, $e->getMessage());
 }
 
+// 6. Búsqueda y Paginación Backend de Comercios (Super Admin) y Aislamiento de Clientes
+echo PHP_EOL . "--- 6. Búsqueda y Paginación Backend (Super Admin) & Aislamiento ---" . PHP_EOL;
+
+// 6.1 Super Admin puede listar comercios paginados
+$pagedAll = $businessService->listBusinessesPaginated($userSuper['id'], '', 'all', 1, 10);
+assertBiz("Super Admin obtiene lista paginada de comercios", is_array($pagedAll['data']) && isset($pagedAll['pagination']));
+assertBiz("Pagination metadata estructurada correctamente", $pagedAll['pagination']['page'] === 1 && $pagedAll['pagination']['per_page'] === 10 && $pagedAll['pagination']['total'] >= 2);
+
+// 6.2 Usuario normal recibe 403 Forbidden al intentar listar comercios paginados
+try {
+    $businessService->listBusinessesPaginated($userA['id'], '', 'all', 1, 10);
+    assertBiz("Usuario normal bloqueado con 403 para listBusinessesPaginated", false);
+} catch (ForbiddenException $e) {
+    assertBiz("Usuario normal bloqueado con 403 para listBusinessesPaginated", true, $e->getMessage());
+}
+
+// 6.3 Búsqueda por nombre de comercio
+$pagedSearch = $businessService->listBusinessesPaginated($userSuper['id'], "Pizzeria Da Luigi {$timestamp}", 'all', 1, 10);
+assertBiz("Búsqueda por nombre exacto/parcial encuentra el comercio", count($pagedSearch['data']) >= 1 && $pagedSearch['data'][0]['name'] === $bizName);
+
+// 6.4 Búsqueda por ID exacto
+$pagedId = $businessService->listBusinessesPaginated($userSuper['id'], (string)$bizA['id'], 'all', 1, 10);
+$foundId = false;
+foreach ($pagedId['data'] as $b) {
+    if ($b['id'] === $bizA['id']) {
+        $foundId = true;
+        break;
+    }
+}
+assertBiz("Búsqueda por ID numérico encuentra el comercio correcto", $foundId && count($pagedId['data']) >= 1);
+
+// 6.5 Filtro por estado active/inactive
+$pagedActive = $businessService->listBusinessesPaginated($userSuper['id'], '', 'active', 1, 50);
+$allActive = true;
+foreach ($pagedActive['data'] as $b) {
+    if ($b['status'] !== 'active') { $allActive = false; break; }
+}
+assertBiz("Filtro status=active devuelve solo comercios activos", $allActive && count($pagedActive['data']) > 0);
+
+// 6.6 Límites de per_page (clamping)
+$pagedClamped = $businessService->listBusinessesPaginated($userSuper['id'], '', 'all', -5, 9999);
+assertBiz("Paginación normaliza page negativa a 1", $pagedClamped['pagination']['page'] === 1);
+assertBiz("Paginación limita per_page excesivo a 100", $pagedClamped['pagination']['per_page'] === 100);
+
+// 6.7 Aislamiento estricto de clientes por business_id
+$customerService = new \App\Modules\Customers\CustomerService($pdo);
+$custA = $customerService->createCustomer($bizA['id'], ['first_name' => 'Cliente', 'last_name' => 'Alfa', 'email' => "alfa_{$timestamp}@test.local", 'privacy_accepted' => true]);
+$custB = $customerService->createCustomer($bizB['id'], ['first_name' => 'Cliente', 'last_name' => 'Beta', 'email' => "beta_{$timestamp}@test.local", 'privacy_accepted' => true]);
+
+$listBizA = $customerService->listCustomers($bizA['id']);
+$listBizB = $customerService->listCustomers($bizB['id']);
+
+$onlyA = true;
+foreach ($listBizA['data'] as $c) {
+    if ($c['business_id'] !== $bizA['id']) { $onlyA = false; break; }
+}
+$onlyB = true;
+foreach ($listBizB['data'] as $c) {
+    if ($c['business_id'] !== $bizB['id']) { $onlyB = false; break; }
+}
+assertBiz("Aislamiento multiempresa: listCustomers(bizA) retorna exclusivamente clientes de bizA", $onlyA && count($listBizA['data']) >= 1);
+assertBiz("Aislamiento multiempresa: listCustomers(bizB) retorna exclusivamente clientes de bizB", $onlyB && count($listBizB['data']) >= 1);
+
 echo PHP_EOL . "==========================================" . PHP_EOL;
-echo "RESULTADO SUBETAPA 1.3: {$passedCount} de {$totalTests} pruebas superadas." . PHP_EOL;
+echo "RESULTADO PRUEBAS BACKEND COMERCIOS: {$passedCount} de {$totalTests} pruebas superadas." . PHP_EOL;
 echo "==========================================" . PHP_EOL;
 
 if ($passedCount !== $totalTests) {

@@ -141,10 +141,11 @@ final class PointsController
 
             $body = $request->getJsonBody();
 
-            if (!isset($body['points']) || !is_numeric($body['points'])) {
+            $rawPoints = $body['points'] ?? ($body['points_delta'] ?? null);
+            if ($rawPoints === null || !is_numeric($rawPoints)) {
                 Response::error('Il campo points è obbligatorio e deve essere un numero intero.', 422);
             }
-            $pointsDelta = (int) $body['points'];
+            $pointsDelta = (int) $rawPoints;
 
             $type = isset($body['type']) ? (string) $body['type'] : 'manual_adjustment';
             $reason = isset($body['reason']) ? trim((string) $body['reason']) : null;
@@ -165,6 +166,8 @@ final class PointsController
                 (int) $session['user_id'],
                 $spentAmount
             );
+
+            $result['new_balance'] = $result['balance'];
 
             $message = $result['idempotent']
                 ? 'Operazione già eseguita in precedenza (idempotente).'

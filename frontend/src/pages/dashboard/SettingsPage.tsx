@@ -23,7 +23,10 @@ export const SettingsPage: React.FC = () => {
   const canManageSettings = hasPermission('settings.manage');
 
   const loadSettings = async () => {
-    if (!activeBusiness) return;
+    if (!activeBusiness) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       const prog = await pointsApi.getProgram(activeBusiness.id);

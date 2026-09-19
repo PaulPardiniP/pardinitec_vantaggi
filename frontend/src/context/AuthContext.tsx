@@ -1,6 +1,6 @@
-﻿import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
-import type { User, Business } from '../types';
-import { authApi } from '../api/services';
+import React, { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react';
+import type { User, Business, BusinessModule } from '../types';
+import { authApi, businessApi } from '../api/services';
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   super_admin: [
@@ -41,38 +41,75 @@ interface AuthContextType {
   isSuperAdmin: boolean;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  sessionState: 'active' | 'pending_2fa' | 'pending_2fa_setup' | null;
+  /** Modules enabled for activeBusiness. null = not yet loaded. */
+  activeModules: BusinessModule[] | null;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   switchBusiness: (businessId: number) => void;
+  selectBusiness: (business: Business) => void;
+  clearActiveBusiness: () => void;
   hasPermission: (permission: string) => boolean;
+  /** Returns true if a given module code is enabled for activeBusiness. */
+  hasModule: (code: string) => boolean;
   refreshSession: () => Promise<void>;
+  /** Evict modules cache for a specific businessId (call after updating modules). */
+  invalidateModulesCache: (businessId: number) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const ACTIVE_BIZ_STORAGE_KEY = 'vantaggi_active_business_id';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [activeBusinessId, setActiveBusinessId] = useState<number | null>(null);
+  const [activeBusinessId, setActiveBusinessId] = useState<number | null>(() => {
+    const saved = localStorage.getItem(ACTIVE_BIZ_STORAGE_KEY);
+    return saved ? Number(saved) : null;
+  });
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refreshSession = async () => {
     try {
       const data = await authApi.me();
       setUser(data.user);
-      setBusinesses(data.businesses || []);
-      if (data.businesses && data.businesses.length > 0) {
-        setActiveBusinessId((prev) => {
-          if (prev && data.businesses.some((b) => b.id === prev)) {
-            return prev;
+
+      if (data.user && (data.user.session_state === 'active' || !data.user.session_state)) {
+        try {
+          const bizList: Business[] = (data as any).businesses ?? (await businessApi.list());
+          setBusinesses(bizList);
+          
+          if (!data.user.is_super_admin && bizList.length > 0) {
+            setActiveBusinessId((prev) => {
+              if (prev && bizList.some((b: Business) => b.id === prev)) {
+                return prev;
+              }
+              const firstId = bizList[0].id;
+              localStorage.setItem(ACTIVE_BIZ_STORAGE_KEY, String(firstId));
+              return firstId;
+            });
+          } else if (data.user.is_super_admin) {
+            // Super Admin: only keep activeBusinessId if it still exists in the business list
+            setActiveBusinessId((prev) => {
+              if (prev && bizList.some((b: Business) => b.id === prev)) {
+                return prev;
+              }
+              localStorage.removeItem(ACTIVE_BIZ_STORAGE_KEY);
+              return null;
+            });
           }
-          return data.businesses[0].id;
-        });
+        } catch {
+          setBusinesses([]);
+        }
+      } else {
+        setBusinesses([]);
       }
     } catch {
       setUser(null);
       setBusinesses([]);
       setActiveBusinessId(null);
+      localStorage.removeItem(ACTIVE_BIZ_STORAGE_KEY);
     } finally {
       setIsLoading(false);
     }
@@ -84,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const activeBusiness = useMemo(() => {
     if (!activeBusinessId || businesses.length === 0) return null;
-    return businesses.find((b) => b.id === activeBusinessId) || businesses[0] || null;
+    return businesses.find((b) => b.id === activeBusinessId) || null;
   }, [activeBusinessId, businesses]);
 
   const isSuperAdmin = Boolean(user?.is_super_admin);
@@ -94,6 +131,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return activeBusiness?.role || null;
   }, [isSuperAdmin, activeBusiness]);
 
+  // Modules cache: { [businessId]: BusinessModule[] }
+  const modulesCacheRef = useRef<Record<number, BusinessModule[]>>({});
+  const [activeModules, setActiveModules] = useState<BusinessModule[] | null>(null);
+
+  useEffect(() => {
+    if (!activeBusiness) {
+      setActiveModules(null);
+      return;
+    }
+    const cached = modulesCacheRef.current[activeBusiness.id];
+    if (cached) {
+      setActiveModules(cached);
+      return;
+    }
+    // Load and cache
+    businessApi.listModules(activeBusiness.id)
+      .then((mods) => {
+        modulesCacheRef.current[activeBusiness.id] = mods;
+        setActiveModules(mods);
+      })
+      .catch(() => {
+        setActiveModules([]);
+      });
+  }, [activeBusiness?.id]);
+
+  const invalidateModulesCache = (businessId: number) => {
+    delete modulesCacheRef.current[businessId];
+    if (activeBusiness?.id === businessId) {
+      setActiveModules(null);
+      // Reload immediately
+      businessApi.listModules(businessId)
+        .then((mods) => {
+          modulesCacheRef.current[businessId] = mods;
+          setActiveModules(mods);
+        })
+        .catch(() => setActiveModules([]));
+    }
+  };
+
+  const hasModule = (code: string): boolean => {
+    if (!activeModules) return true; // while loading, don't hide
+    return activeModules.some((m) => m.code === code && m.is_enabled);
+  };
+
   const hasPermission = (permission: string): boolean => {
     if (isSuperAdmin) return true;
     if (!role) return false;
@@ -101,11 +182,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return permissions.includes(permission);
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<User> => {
     setIsLoading(true);
     try {
-      await authApi.login(email, password);
+      const res = await authApi.login(email, password);
+      setUser(res.user);
       await refreshSession();
+      return res.user;
     } finally {
       setIsLoading(false);
     }
@@ -121,15 +204,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setBusinesses([]);
       setActiveBusinessId(null);
+      localStorage.removeItem(ACTIVE_BIZ_STORAGE_KEY);
       setIsLoading(false);
     }
   };
 
   const switchBusiness = (businessId: number) => {
-    if (businesses.some((b) => b.id === businessId)) {
+    const found = businesses.find((b) => b.id === businessId);
+    if (found) {
       setActiveBusinessId(businessId);
+      localStorage.setItem(ACTIVE_BIZ_STORAGE_KEY, String(businessId));
     }
   };
+
+  const selectBusiness = (business: Business) => {
+    setActiveBusinessId(business.id);
+    localStorage.setItem(ACTIVE_BIZ_STORAGE_KEY, String(business.id));
+    if (!businesses.some((b) => b.id === business.id)) {
+      setBusinesses((prev) => [...prev, business]);
+    }
+  };
+
+  const clearActiveBusiness = () => {
+    setActiveBusinessId(null);
+    localStorage.removeItem(ACTIVE_BIZ_STORAGE_KEY);
+  };
+
+  const sessionState = user?.session_state || (user ? 'active' : null);
+  const isAuthenticated = Boolean(user && sessionState === 'active');
 
   return (
     <AuthContext.Provider
@@ -140,12 +242,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role,
         isSuperAdmin,
         isLoading,
-        isAuthenticated: Boolean(user),
+        isAuthenticated,
+        sessionState,
+        activeModules,
         login,
         logout,
         switchBusiness,
+        selectBusiness,
+        clearActiveBusiness,
         hasPermission,
+        hasModule,
         refreshSession,
+        invalidateModulesCache,
       }}
     >
       {children}

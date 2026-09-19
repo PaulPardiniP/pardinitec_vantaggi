@@ -1,0 +1,1 @@
+ALTER TABLE sessions ADD COLUMN state ENUM('active', 'pending_2fa') NOT NULL DEFAULT 'active' AFTER user_id;

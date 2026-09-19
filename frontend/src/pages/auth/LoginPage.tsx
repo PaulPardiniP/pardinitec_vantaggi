@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/common/Button';
@@ -8,7 +8,7 @@ import { isSafeInternalPath } from '../../components/common/ProtectedRoute';
 import { ApiError } from '../../api/client';
 
 export const LoginPage: React.FC = () => {
-  const { login, isSuperAdmin } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -36,11 +36,20 @@ export const LoginPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      const loggedUser = await login(email, password);
+      if (loggedUser.session_state === 'pending_2fa_setup') {
+        navigate('/2fa?mode=setup', { replace: true });
+        return;
+      }
+      if (loggedUser.session_state === 'pending_2fa') {
+        navigate('/2fa', { replace: true });
+        return;
+      }
+
       // Reindirizzamento sicuro
       if (returnTo) {
         navigate(returnTo, { replace: true });
-      } else if (isSuperAdmin) {
+      } else if (loggedUser.is_super_admin) {
         navigate('/admin', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });

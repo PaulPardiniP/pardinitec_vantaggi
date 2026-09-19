@@ -1,4 +1,4 @@
-﻿import { apiRequest, generateOperationId, setCsrfToken } from './client';
+import { apiRequest, generateOperationId, setCsrfToken } from './client';
 import type {
   User,
   Business,
@@ -19,12 +19,15 @@ import type {
 
 // ==================== AUTH ====================
 export const authApi = {
-  async me(): Promise<{ user: User; businesses: Business[] }> {
-    const res = await apiRequest<{ success: boolean; data: { user: User; businesses: Business[] } }>('/api/v1/auth/me');
+  async me(): Promise<{ user: User; csrf_token?: string }> {
+    const res = await apiRequest<{ success: boolean; data: { user: User; csrf_token: string } }>('/api/v1/auth/me');
+    if (res.data?.csrf_token) {
+      setCsrfToken(res.data.csrf_token);
+    }
     return res.data;
   },
 
-  async login(email: string, password: string): Promise<{ user: User; csrf_token: string; session_id_hash?: string }> {
+  async login(email: string, password: string): Promise<{ user: User; csrf_token: string }> {
     const res = await apiRequest<{ success: boolean; data: { user: User; csrf_token: string } }>('/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
@@ -39,6 +42,38 @@ export const authApi = {
     await apiRequest('/api/v1/auth/logout', { method: 'POST' });
     setCsrfToken(null);
   },
+
+  async setup2fa(): Promise<{ uri: string; secret: string }> {
+    const res = await apiRequest<{ success: boolean; data?: { uri: string; secret: string }; uri?: string; secret?: string }>('/api/v1/auth/2fa/setup', {
+      method: 'POST',
+    });
+    return {
+      uri: res.data?.uri || res.uri || '',
+      secret: res.data?.secret || res.secret || '',
+    };
+  },
+
+  async verify2faSetup(code: string): Promise<{ recovery_codes: string[]; user: User }> {
+    const res = await apiRequest<{ success: boolean; data?: { recovery_codes: string[]; user: User }; recovery_codes?: string[]; user?: User }>('/api/v1/auth/2fa/verify-setup', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    return {
+      recovery_codes: res.data?.recovery_codes || res.recovery_codes || [],
+      user: (res.data?.user || res.user) as User,
+    };
+  },
+
+  async challenge2fa(code: string): Promise<{ user: User; csrf_token: string }> {
+    const res = await apiRequest<{ success: boolean; data: { user: User; csrf_token: string } }>('/api/v1/auth/2fa/challenge', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    if (res.data?.csrf_token) {
+      setCsrfToken(res.data.csrf_token);
+    }
+    return res.data;
+  },
 };
 
 // ==================== BUSINESSES ====================
@@ -48,15 +83,45 @@ export const businessApi = {
     return res.data;
   },
 
+  async listPaginated(params?: { search?: string; status?: 'all' | 'active' | 'inactive'; page?: number; per_page?: number }): Promise<{
+    data: Business[];
+    pagination: { page: number; per_page: number; total: number; total_pages: number };
+  }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: Business[];
+      pagination: { page: number; per_page: number; total: number; total_pages: number };
+    }>('/api/v1/admin/businesses', {
+      params,
+    });
+    return { data: res.data, pagination: res.pagination };
+  },
+
   async get(id: number): Promise<Business> {
     const res = await apiRequest<{ success: boolean; data: Business }>(`/api/v1/businesses/${id}`);
     return res.data;
   },
 
-  async create(data: { name: string; slug: string; tax_id?: string }): Promise<Business> {
+  async create(data: { name: string; slug?: string; tax_id?: string; self_registration_enabled?: boolean }): Promise<Business> {
     const res = await apiRequest<{ success: boolean; data: Business }>('/api/v1/businesses', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+    return res.data;
+  },
+
+  async update(id: number, data: { name?: string; slug?: string; tax_id?: string | null; self_registration_enabled?: boolean; status?: 'active' | 'inactive' }): Promise<Business> {
+    const res = await apiRequest<{ success: boolean; data: Business }>(`/api/v1/businesses/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return res.data;
+  },
+
+  async toggleStatus(id: number, status?: 'active' | 'inactive'): Promise<Business> {
+    const res = await apiRequest<{ success: boolean; data: Business }>(`/api/v1/businesses/${id}/toggle-status`, {
+      method: 'POST',
+      body: JSON.stringify({ status }),
     });
     return res.data;
   },
@@ -174,6 +239,21 @@ export const customerApi = {
     });
   },
 
+  async grantMarketing(
+    businessId: number,
+    customerId: number,
+    data?: { confirmed?: boolean; source?: string; privacy_policy_version?: string }
+  ): Promise<Consent> {
+    const res = await apiRequest<{ success: boolean; data: Consent }>(
+      `/api/v1/businesses/${businessId}/customers/${customerId}/consents/grant-marketing`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true, ...(data || {}) }),
+      }
+    );
+    return res.data;
+  },
+
   async recordConsent(
     businessId: number,
     customerId: number,
@@ -204,12 +284,20 @@ export const loyaltyApi = {
     return res.data;
   },
 
-  async createAccount(businessId: number, customerId: number, profileCode: 'punti' | 'vantaggi' | 'vip'): Promise<LoyaltyAccount> {
-    const res = await apiRequest<{ success: boolean; data: LoyaltyAccount }>(
+  async createAccount(
+    businessId: number,
+    customerId: number,
+    profileCode: 'punti' | 'vantaggi' | 'vip',
+    issueCredential: boolean = false
+  ): Promise<any> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: any;
+    }>(
       `/api/v1/businesses/${businessId}/customers/${customerId}/loyalty-accounts`,
       {
         method: 'POST',
-        body: JSON.stringify({ profile_code: profileCode }),
+        body: JSON.stringify({ profile_code: profileCode, issue_credential: issueCredential }),
       }
     );
     return res.data;
@@ -247,6 +335,13 @@ export const loyaltyApi = {
       method: 'POST',
     });
   },
+
+  async getAccountPreview(businessId: number, accountId: number): Promise<PublicCardView> {
+    const res = await apiRequest<{ success: boolean; data: PublicCardView }>(
+      `/api/v1/businesses/${businessId}/loyalty-accounts/${accountId}/preview`
+    );
+    return res.data;
+  },
 };
 
 // ==================== POINTS ====================
@@ -278,17 +373,30 @@ export const pointsApi = {
   async adjust(
     businessId: number,
     accountId: number,
-    data: { points_delta: number; reason?: string; operation_id?: string }
-  ): Promise<{ transaction: PointsTransaction; new_balance: number; idempotent?: boolean }> {
+    data: { points?: number; points_delta?: number; reason?: string; operation_id?: string; type?: string; spent_amount?: number }
+  ): Promise<{ transaction: PointsTransaction; balance: number; new_balance: number; idempotent?: boolean }> {
     const opId = data.operation_id || generateOperationId();
+    const rawVal = data.points !== undefined ? data.points : data.points_delta;
+    const pointsNum = typeof rawVal === 'number' ? Math.trunc(rawVal) : parseInt(String(rawVal || 0), 10);
     const res = await apiRequest<{
       success: boolean;
-      data: { transaction: PointsTransaction; new_balance: number; idempotent?: boolean };
+      data: { transaction: PointsTransaction; balance: number; new_balance?: number; idempotent?: boolean };
     }>(`/api/v1/businesses/${businessId}/loyalty-accounts/${accountId}/points/adjust`, {
       method: 'POST',
-      body: JSON.stringify({ ...data, operation_id: opId }),
+      body: JSON.stringify({
+        points: pointsNum,
+        reason: data.reason,
+        operation_id: opId,
+        type: data.type,
+        spent_amount: data.spent_amount,
+      }),
     });
-    return res.data;
+    const balanceVal = res.data.balance !== undefined ? res.data.balance : (res.data.new_balance ?? 0);
+    return {
+      ...res.data,
+      balance: balanceVal,
+      new_balance: res.data.new_balance !== undefined ? res.data.new_balance : balanceVal,
+    };
   },
 
   async listTransactions(
@@ -343,7 +451,9 @@ export const rewardsApi = {
     businessId: number,
     accountId: number,
     rewardId: number,
-    operationId?: string
+    operationId?: string,
+    notes?: string,
+    deliveryConfirmed: boolean = true
   ): Promise<{ redemption_id: number; reward_id: number; points_spent: number; new_balance: number; idempotent?: boolean }> {
     const opId = operationId || generateOperationId();
     const res = await apiRequest<{
@@ -351,7 +461,11 @@ export const rewardsApi = {
       data: { redemption_id: number; reward_id: number; points_spent: number; new_balance: number; idempotent?: boolean };
     }>(`/api/v1/businesses/${businessId}/loyalty-accounts/${accountId}/rewards/${rewardId}/redeem`, {
       method: 'POST',
-      body: JSON.stringify({ operation_id: opId }),
+      body: JSON.stringify({
+        operation_id: opId,
+        notes: notes || undefined,
+        delivery_confirmed: deliveryConfirmed,
+      }),
     });
     return res.data;
   },
@@ -440,11 +554,18 @@ export const cardsApi = {
     return res.data;
   },
 
-  async activate(businessId: number, cardId: number, loyaltyAccountId: number): Promise<Card> {
-    const res = await apiRequest<{ success: boolean; data: Card }>(`/api/v1/businesses/${businessId}/cards/${cardId}/activate`, {
-      method: 'POST',
-      body: JSON.stringify({ loyalty_account_id: loyaltyAccountId }),
-    });
+  async activate(
+    businessId: number,
+    cardId: number,
+    loyaltyAccountId: number
+  ): Promise<{ card: Card; token: string; public_url: string }> {
+    const res = await apiRequest<{ success: boolean; data: { card: Card; token: string; public_url: string } }>(
+      `/api/v1/businesses/${businessId}/cards/${cardId}/activate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ loyalty_account_id: loyaltyAccountId }),
+      }
+    );
     return res.data;
   },
 
@@ -455,8 +576,14 @@ export const cardsApi = {
     return res.data;
   },
 
-  async reactivate(businessId: number, cardId: number): Promise<Card> {
-    const res = await apiRequest<{ success: boolean; data: Card }>(`/api/v1/businesses/${businessId}/cards/${cardId}/reactivate`, {
+  async reactivate(
+    businessId: number,
+    cardId: number
+  ): Promise<Card & { token?: string; public_url?: string; requires_reprogramming?: boolean }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: Card & { token?: string; public_url?: string; requires_reprogramming?: boolean };
+    }>(`/api/v1/businesses/${businessId}/cards/${cardId}/reactivate`, {
       method: 'POST',
     });
     return res.data;
@@ -469,14 +596,18 @@ export const cardsApi = {
     return res.data;
   },
 
-  async replace(businessId: number, oldCardId: number, newCardId: number): Promise<{ old_card: Card; new_card: Card }> {
-    const res = await apiRequest<{ success: boolean; data: { old_card: Card; new_card: Card } }>(
-      `/api/v1/businesses/${businessId}/cards/${oldCardId}/replace`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ new_card_id: newCardId }),
-      }
-    );
+  async replace(
+    businessId: number,
+    oldCardId: number,
+    newCardId: number
+  ): Promise<{ old_card: Card; new_card: Card; token: string; public_url: string }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: { old_card: Card; new_card: Card; token: string; public_url: string };
+    }>(`/api/v1/businesses/${businessId}/cards/${oldCardId}/replace`, {
+      method: 'POST',
+      body: JSON.stringify({ new_card_id: newCardId }),
+    });
     return res.data;
   },
 
@@ -499,7 +630,7 @@ export const cardsApi = {
 // ==================== PUBLIC CARDS ====================
 export const publicCardApi = {
   async resolve(token: string): Promise<PublicCardView> {
-    const res = await apiRequest<{ success: boolean; data: PublicCardView }>(`/c/${token}`);
+    const res = await apiRequest<{ success: boolean; data: PublicCardView }>(`/api/v1/public/cards/${token}`);
     return res.data;
   },
 };

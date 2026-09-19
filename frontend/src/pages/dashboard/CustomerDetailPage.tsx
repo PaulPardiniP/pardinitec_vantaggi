@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi, loyaltyApi } from '../../api/services';
-import type { Customer, CardProfile, Credential } from '../../types';
+import type { Customer, Credential, CustomerConsents } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Select } from '../../components/common/Select';
@@ -18,7 +18,6 @@ export const CustomerDetailPage: React.FC = () => {
   const { activeBusiness, hasPermission } = useAuth();
 
   const [customer, setCustomer] = useState<Customer | null>(null);
-  const [profiles, setProfiles] = useState<CardProfile[]>([]);
   const [accountCredentials, setAccountCredentials] = useState<Record<number, Credential[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,19 +29,28 @@ export const CustomerDetailPage: React.FC = () => {
   const [editLastName, setEditLastName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  const [editModalError, setEditModalError] = useState<string | null>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
-  // Creazione nuovo conto per profilo diverso
+  // Attivazione / Ampliamento conto
   const [isNewAccountOpen, setIsNewAccountOpen] = useState(false);
-  const [newAccountProfile, setNewAccountProfile] = useState<'punti' | 'vantaggi' | 'vip'>('punti');
+  const [newAccountProfile, setNewAccountProfile] = useState<'punti' | 'vantaggi' | 'vip'>('vantaggi');
+  const [accountModalError, setAccountModalError] = useState<string | null>(null);
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
 
   // Rotazione credenziale
   const [credToRotate, setCredToRotate] = useState<{ credentialId: number; accountName: string } | null>(null);
+  const [rotateModalError, setRotateModalError] = useState<string | null>(null);
   const [isRotating, setIsRotating] = useState(false);
 
   // Visualizzazione QR Credenziale
   const [qrDisplay, setQrDisplay] = useState<{ token: string; profileName: string } | null>(null);
+
+  // Nuovo consenso marketing
+  const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
+  const [consentCheckbox, setConsentCheckbox] = useState(false);
+  const [isGrantingConsent, setIsGrantingConsent] = useState(false);
+  const [consentModalError, setConsentModalError] = useState<string | null>(null);
 
   const canEdit = hasPermission('customer.edit');
 
@@ -57,9 +65,6 @@ export const CustomerDetailPage: React.FC = () => {
       setEditLastName(custData.last_name);
       setEditPhone(custData.phone || '');
       setEditEmail(custData.email || '');
-
-      const profList = await loyaltyApi.listProfiles();
-      setProfiles(profList);
 
       // Carica credenziali per ciascun conto
       if (custData.loyalty_accounts && custData.loyalty_accounts.length > 0) {
@@ -91,6 +96,7 @@ export const CustomerDetailPage: React.FC = () => {
     e.preventDefault();
     if (!activeBusiness || !customer) return;
     setIsSubmittingEdit(true);
+    setEditModalError(null);
     setFeedback(null);
     try {
       const updated = await customerApi.update(activeBusiness.id, customer.id, {
@@ -101,9 +107,10 @@ export const CustomerDetailPage: React.FC = () => {
       });
       setCustomer((prev) => (prev ? { ...prev, ...updated } : updated));
       setIsEditOpen(false);
+      setEditModalError(null);
       setFeedback({ type: 'success', message: 'Anagrafica cliente aggiornata con successo.' });
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'aggiornamento.' });
+      setEditModalError(err.message || 'Errore durante l\'aggiornamento.');
     } finally {
       setIsSubmittingEdit(false);
     }
@@ -122,22 +129,71 @@ export const CustomerDetailPage: React.FC = () => {
     }
   };
 
-  // Creazione Nuovo Conto Fedeltà Indipendente
-  const handleCreateAccount = async (e: React.FormEvent) => {
+  // Acquisisci Nuovo Consenso Marketing
+  const handleOpenGrantMarketingModal = () => {
+    setConsentCheckbox(false);
+    setConsentModalError(null);
+    setIsConsentModalOpen(true);
+  };
+
+  const handleGrantMarketingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeBusiness || !customer) return;
-    setIsCreatingAccount(true);
-    setFeedback(null);
+    if (!activeBusiness || !customer || !consentCheckbox) return;
+    setIsGrantingConsent(true);
+    setConsentModalError(null);
     try {
-      await loyaltyApi.createAccount(activeBusiness.id, customer.id, newAccountProfile);
+      await customerApi.grantMarketing(activeBusiness.id, customer.id, {
+        confirmed: true,
+        source: 'in_person',
+        privacy_policy_version: 'v1.0',
+      });
       setFeedback({
         type: 'success',
-        message: `Nuovo conto indipendente (${newAccountProfile.toUpperCase()}) creato con successo!`,
+        message: 'Consenso comunicazioni marketing acquisito con successo.',
       });
-      setIsNewAccountOpen(false);
+      setIsConsentModalOpen(false);
       await fetchCustomerData();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Impossibile creare il conto.' });
+      setConsentModalError(err.message || 'Errore durante l\'acquisizione del consenso.');
+    } finally {
+      setIsGrantingConsent(false);
+    }
+  };
+
+  // Attivazione / Ampliamento Conto (Regola definitiva Punti -> Vantaggi e VIP indipendente)
+  const handleCreateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness || !customer || isCreatingAccount) return;
+    setIsCreatingAccount(true);
+    setAccountModalError(null);
+    setFeedback(null);
+    try {
+      const res = await loyaltyApi.createAccount(activeBusiness.id, customer.id, newAccountProfile, true);
+      setIsNewAccountOpen(false);
+      setAccountModalError(null);
+      await fetchCustomerData();
+
+      if (res?.upgraded) {
+        setFeedback({
+          type: 'success',
+          message: 'Profilo conto aggiornato a Vantaggi con successo! Saldo, movimenti e codice QR rimangono invariati.',
+        });
+        // Non apre QrModal perché il QR code rimane esattamente lo stesso
+      } else {
+        const profileLabel = res?.loyalty_account?.profile_name || newAccountProfile.toUpperCase();
+        setFeedback({
+          type: 'success',
+          message: `Nuovo conto (${profileLabel}) creato con successo!`,
+        });
+        if (res?.token) {
+          setQrDisplay({
+            token: res.token,
+            profileName: profileLabel,
+          });
+        }
+      }
+    } catch (err: any) {
+      setAccountModalError(err.message || 'Impossibile completare l\'operazione.');
     } finally {
       setIsCreatingAccount(false);
     }
@@ -161,15 +217,17 @@ export const CustomerDetailPage: React.FC = () => {
   const handleConfirmRotate = async () => {
     if (!activeBusiness || !credToRotate) return;
     setIsRotating(true);
+    setRotateModalError(null);
     setFeedback(null);
     try {
       const res = await loyaltyApi.rotateCredential(activeBusiness.id, credToRotate.credentialId);
       setFeedback({ type: 'success', message: 'Credenziale digitale rotata con successo! Il token precedente è stato disabilitato.' });
       setQrDisplay({ token: res.token, profileName: credToRotate.accountName });
       setCredToRotate(null);
+      setRotateModalError(null);
       await fetchCustomerData();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante la rotazione.' });
+      setRotateModalError(err.message || 'Errore durante la rotazione.');
     } finally {
       setIsRotating(false);
     }
@@ -178,12 +236,40 @@ export const CustomerDetailPage: React.FC = () => {
   if (isLoading) return <Spinner size="lg" text="Caricamento scheda cliente..." />;
   if (error || !customer) return <Alert type="error" message={error || 'Cliente non trovato.'} />;
 
-  // Profili ancora non associati al cliente
-  const existingProfileCodes = (customer.loyalty_accounts || []).map((a) => a.profile_code);
-  const availableProfilesToCreate = profiles.filter((p) => !existingProfileCodes.includes(p.code));
+  // Calcolo opzioni e profili disponibili
+  const existingAccounts = customer.loyalty_accounts || [];
+  const hasPunti = existingAccounts.some((a) => a.profile_code === 'punti');
+  const hasVantaggi = existingAccounts.some((a) => a.profile_code === 'vantaggi');
+  const hasVip = existingAccounts.some((a) => a.profile_code === 'vip');
 
-  const marketingConsent = customer.consents?.find((c) => c.type === 'marketing');
-  const privacyConsent = customer.consents?.find((c) => c.type === 'privacy');
+  const canUpgradeToVantaggi = hasPunti && !hasVantaggi;
+  const canCreateVip = !hasVip;
+  const canCreateStandard = !hasPunti && !hasVantaggi;
+
+  const availableOptions: { label: string; value: 'punti' | 'vantaggi' | 'vip' }[] = [];
+  if (canUpgradeToVantaggi) {
+    availableOptions.push({ label: '⭐ Attiva Vantaggi (ampliamento conto Punti esistente)', value: 'vantaggi' });
+  }
+  if (canCreateStandard) {
+    availableOptions.push({ label: 'Punti (modalità base)', value: 'punti' });
+    availableOptions.push({ label: 'Vantaggi (punti + offerte)', value: 'vantaggi' });
+  }
+  if (canCreateVip) {
+    availableOptions.push({ label: '👑 Crea conto VIP separato (nuova credenziale e QR autonomi)', value: 'vip' });
+  }
+
+  const handleOpenAccountModal = (defaultProfile?: 'punti' | 'vantaggi' | 'vip') => {
+    const initial = defaultProfile || (canUpgradeToVantaggi ? 'vantaggi' : canCreateVip ? 'vip' : 'punti');
+    setNewAccountProfile(initial);
+    setAccountModalError(null);
+    setIsNewAccountOpen(true);
+  };
+
+  const consents: CustomerConsents | undefined = customer.consents;
+  const privacyGranted = consents?.privacy_granted ?? false;
+  const marketingGranted = consents?.marketing_granted ?? false;
+  const latestPrivacyHistory = consents?.history?.find((c) => c.type === 'privacy');
+  const latestMarketingHistory = consents?.history?.find((c) => c.type === 'marketing');
 
   return (
     <div>
@@ -201,7 +287,7 @@ export const CustomerDetailPage: React.FC = () => {
           <p className="page-subtitle">Cliente #{customer.id} • Registrato il {new Date(customer.created_at).toLocaleDateString('it-IT')}</p>
         </div>
         {canEdit && (
-          <Button variant="secondary" onClick={() => setIsEditOpen(true)}>
+          <Button variant="secondary" onClick={() => { setEditModalError(null); setIsEditOpen(true); }}>
             ✏️ Modifica Anagrafica
           </Button>
         )}
@@ -237,21 +323,32 @@ export const CustomerDetailPage: React.FC = () => {
               <div>
                 <strong>Informativa Privacy</strong>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                  Accettata il {privacyConsent ? new Date(privacyConsent.granted_at).toLocaleDateString('it-IT') : '—'}
+                  {latestPrivacyHistory
+                    ? `Accettata il ${new Date(latestPrivacyHistory.granted_at).toLocaleDateString('it-IT')}`
+                    : privacyGranted
+                    ? 'Accettata'
+                    : '—'}
                 </div>
               </div>
-              <span className="badge badge-success">Attivo</span>
+              {privacyGranted ? (
+                <span className="badge badge-success">Attivo</span>
+              ) : (
+                <span className="badge badge-warning">Non registrata</span>
+              )}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem' }}>
               <div>
                 <strong>Comunicazioni Marketing</strong>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                  Stato: {marketingConsent?.status === 'granted' ? 'Accettato' : 'Revocato / Non concesso'}
+                  Stato: {marketingGranted ? 'Accettato' : 'Revocato / Non concesso'}
+                  {latestMarketingHistory && (
+                    <span> · {new Date(latestMarketingHistory.granted_at).toLocaleDateString('it-IT')}</span>
+                  )}
                 </div>
               </div>
               <div>
-                {marketingConsent?.status === 'granted' ? (
+                {marketingGranted ? (
                   canEdit ? (
                     <Button variant="danger" size="sm" onClick={handleRevokeMarketing}>
                       Revoca
@@ -260,7 +357,13 @@ export const CustomerDetailPage: React.FC = () => {
                     <span className="badge badge-success">Attivo</span>
                   )
                 ) : (
-                  <span className="badge badge-warning">Revocato</span>
+                  canEdit ? (
+                    <Button variant="primary" size="sm" onClick={handleOpenGrantMarketingModal}>
+                      Acquisisci nuovo consenso
+                    </Button>
+                  ) : (
+                    <span className="badge badge-warning">Revocato</span>
+                  )
                 )}
               </div>
             </div>
@@ -268,18 +371,32 @@ export const CustomerDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Sezione Conti di Fidelizzazione Indipendenti */}
-      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* Sezione Conti di Fidelizzazione */}
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Conti di Fidelizzazione Indipendenti</h2>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Conti di Fidelizzazione</h2>
           <p className="page-subtitle">
-            Ciascun conto (Punti, Vantaggi, VIP) possiede saldo, movimenti, benefici e credenziali autonomi.
+            Conto standard (Punti / Vantaggi) ed eventuale conto VIP separato con credenziali e benefici autonomi.
           </p>
         </div>
-        {canEdit && availableProfilesToCreate.length > 0 && (
-          <Button variant="primary" onClick={() => setIsNewAccountOpen(true)}>
-            ➕ Attiva Altro Conto Fedeltà
-          </Button>
+        {canEdit && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {canUpgradeToVantaggi && (
+              <Button variant="primary" onClick={() => handleOpenAccountModal('vantaggi')}>
+                ⭐ Attiva Vantaggi
+              </Button>
+            )}
+            {canCreateVip && (
+              <Button variant={canUpgradeToVantaggi ? 'secondary' : 'primary'} onClick={() => handleOpenAccountModal('vip')}>
+                👑 Crea Conto VIP Separato
+              </Button>
+            )}
+            {canCreateStandard && (
+              <Button variant="primary" onClick={() => handleOpenAccountModal('punti')}>
+                ➕ Attiva Conto Fedeltà
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -315,14 +432,24 @@ export const CustomerDetailPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {acc.balance !== undefined && (
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--color-text)' }}>{acc.balance}</div>
-                      <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600 }}>
-                        Punti Saldo Attuale
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+                    {acc.balance !== undefined && (
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--color-text)' }}>{acc.balance}</div>
+                        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                          Punti Saldo Attuale
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                    <Link
+                      to={`/dashboard/loyalty-accounts/${acc.id}/preview`}
+                      className="btn btn-outline btn-sm"
+                      style={{ textDecoration: 'none' }}
+                      title="Visualizza anteprima carta senza modificare credenziali"
+                    >
+                      👁 Anteprima carta
+                    </Link>
+                  </div>
                 </div>
 
                 {/* Sezione Credenziali del Conto */}
@@ -345,25 +472,36 @@ export const CustomerDetailPage: React.FC = () => {
 
                       {activeDigitalCred ? (
                         <div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
                             Emessa il: {new Date(activeDigitalCred.issued_at).toLocaleString('it-IT')}
                           </div>
-                          {canEdit && (
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
+                            Il link originale non è recuperabile in chiaro. Per visualizzare la carta usa l'anteprima sicura. Se il cliente lo ha smarrito, puoi rigenerarlo:
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                            <Link
+                              to={`/dashboard/loyalty-accounts/${acc.id}/preview`}
+                              className="btn btn-primary btn-sm"
+                              style={{ textDecoration: 'none' }}
+                            >
+                              👁 Anteprima carta
+                            </Link>
+                            {canEdit && (
                               <Button
                                 variant="secondary"
                                 size="sm"
-                                onClick={() =>
+                                onClick={() => {
+                                  setRotateModalError(null);
                                   setCredToRotate({
                                     credentialId: activeDigitalCred.id,
                                     accountName: `${customer.first_name} ${customer.last_name} (${acc.profile_name})`,
-                                  })
-                                }
+                                  });
+                                }}
                               >
-                                🔄 Rigenera (Rotazione)
+                                🔄 Rigenera credenziale
                               </Button>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       ) : (
                         canEdit && (
@@ -404,8 +542,20 @@ export const CustomerDetailPage: React.FC = () => {
       </div>
 
       {/* Modale Modifica Anagrafica */}
-      <Modal isOpen={isEditOpen} title="Modifica Dati Cliente" onClose={() => setIsEditOpen(false)}>
+      <Modal
+        isOpen={isEditOpen}
+        title="Modifica Dati Cliente"
+        onClose={() => {
+          setIsEditOpen(false);
+          setEditModalError(null);
+        }}
+      >
         <form onSubmit={handleUpdateCustomer}>
+          {editModalError && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Alert type="error" message={editModalError} onDismiss={() => setEditModalError(null)} />
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             <Input label="Nome *" required value={editFirstName} onChange={(e) => setEditFirstName(e.target.value)} />
             <Input label="Cognome *" required value={editLastName} onChange={(e) => setEditLastName(e.target.value)} />
@@ -414,7 +564,15 @@ export const CustomerDetailPage: React.FC = () => {
           <Input label="Email" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
 
           <div className="modal-actions">
-            <Button type="button" variant="secondary" onClick={() => setIsEditOpen(false)} disabled={isSubmittingEdit}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setIsEditOpen(false);
+                setEditModalError(null);
+              }}
+              disabled={isSubmittingEdit}
+            >
               Annulla
             </Button>
             <Button type="submit" variant="primary" isLoading={isSubmittingEdit}>
@@ -424,35 +582,80 @@ export const CustomerDetailPage: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Modale Attiva Altro Conto */}
-      <Modal isOpen={isNewAccountOpen} title="Attiva Nuovo Conto Indipendente" onClose={() => setIsNewAccountOpen(false)}>
+      {/* Modale Attiva / Amplia Conto */}
+      <Modal
+        isOpen={isNewAccountOpen}
+        title={
+          newAccountProfile === 'vantaggi' && hasPunti
+            ? 'Attiva Profilo Vantaggi'
+            : newAccountProfile === 'vip'
+            ? 'Crea Conto VIP Separato'
+            : 'Attiva Conto Fedeltà'
+        }
+        onClose={() => {
+          setIsNewAccountOpen(false);
+          setAccountModalError(null);
+        }}
+      >
         <form onSubmit={handleCreateAccount}>
+          {accountModalError && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Alert type="error" message={accountModalError} onDismiss={() => setAccountModalError(null)} />
+            </div>
+          )}
+
           <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
-            Seleziona il profilo di fidelizzazione da aggiungere per questo cliente. Il nuovo conto avrà saldo e benefici completamente separati.
+            {newAccountProfile === 'vantaggi' && hasPunti
+              ? 'Il conto Punti del cliente verrà ampliato al profilo Vantaggi: conserverà lo stesso saldo, storico e codice QR, abilitando offerte e promozioni.'
+              : newAccountProfile === 'vip'
+              ? 'Verrà creato un conto VIP indipendente con il proprio saldo, benefici esclusivi e una nuova credenziale digitale con QR code separato.'
+              : 'Seleziona il profilo di fidelizzazione da attivare.'}
           </p>
 
-          <Select
-            label="Profilo di Fidelizzazione *"
-            options={availableProfilesToCreate.map((p) => ({ label: `${p.name} (${p.code.toUpperCase()})`, value: p.code }))}
-            value={newAccountProfile}
-            onChange={(e) => setNewAccountProfile(e.target.value as any)}
-          />
+          {availableOptions.length > 1 && (
+            <Select
+              label="Operazione da eseguire *"
+              options={availableOptions}
+              value={newAccountProfile}
+              onChange={(e) => setNewAccountProfile(e.target.value as any)}
+            />
+          )}
 
           <div className="modal-actions">
-            <Button type="button" variant="secondary" onClick={() => setIsNewAccountOpen(false)} disabled={isCreatingAccount}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setIsNewAccountOpen(false);
+                setAccountModalError(null);
+              }}
+              disabled={isCreatingAccount}
+            >
               Annulla
             </Button>
             <Button type="submit" variant="primary" isLoading={isCreatingAccount}>
-              Crea Conto
+              {newAccountProfile === 'vantaggi' && hasPunti ? 'Attiva Vantaggi' : 'Conferma Creazione'}
             </Button>
           </div>
         </form>
       </Modal>
 
       {/* Modale Conferma Rotazione */}
-      <Modal isOpen={Boolean(credToRotate)} title="Conferma Rotazione Credenziale" onClose={() => setCredToRotate(null)}>
+      <Modal
+        isOpen={Boolean(credToRotate)}
+        title="Conferma Rotazione Credenziale"
+        onClose={() => {
+          setCredToRotate(null);
+          setRotateModalError(null);
+        }}
+      >
         {credToRotate && (
           <div>
+            {rotateModalError && (
+              <div style={{ marginBottom: '1rem' }}>
+                <Alert type="error" message={rotateModalError} onDismiss={() => setRotateModalError(null)} />
+              </div>
+            )}
             <p>
               Stai per generare un <strong>nuovo token e link digitale</strong> per {credToRotate.accountName}.
             </p>
@@ -460,7 +663,14 @@ export const CustomerDetailPage: React.FC = () => {
               ⚠️ Il link e il QR code precedenti smetteranno di funzionare immediatamente. Dovrai fornire il nuovo link al cliente.
             </p>
             <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setCredToRotate(null)} disabled={isRotating}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setCredToRotate(null);
+                  setRotateModalError(null);
+                }}
+                disabled={isRotating}
+              >
                 Annulla
               </Button>
               <Button variant="danger" onClick={handleConfirmRotate} isLoading={isRotating}>
@@ -471,14 +681,74 @@ export const CustomerDetailPage: React.FC = () => {
         )}
       </Modal>
 
+      {/* Modale Acquisisci Nuovo Consenso Marketing */}
+      <Modal
+        isOpen={isConsentModalOpen}
+        title="Acquisisci Consenso Marketing"
+        onClose={() => {
+          setIsConsentModalOpen(false);
+          setConsentModalError(null);
+        }}
+      >
+        <form onSubmit={handleGrantMarketingSubmit}>
+          {consentModalError && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Alert type="error" message={consentModalError} onDismiss={() => setConsentModalError(null)} />
+            </div>
+          )}
+
+          <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
+            Registra un nuovo consenso al trattamento dati per comunicazioni promozionali per <strong>{customer?.first_name} {customer?.last_name}</strong>.
+          </p>
+
+          <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginBottom: '1.25rem' }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+              <input
+                type="checkbox"
+                checked={consentCheckbox}
+                onChange={(e) => setConsentCheckbox(e.target.checked)}
+                style={{ marginTop: '0.2rem', width: '1.1rem', height: '1.1rem' }}
+              />
+              <span>
+                Acconsento a ricevere comunicazioni promozionali e offerte da <strong>{activeBusiness?.name || 'questo esercizio'}</strong>.
+              </span>
+            </label>
+          </div>
+
+          <div className="modal-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setIsConsentModalOpen(false);
+                setConsentModalError(null);
+              }}
+              disabled={isGrantingConsent}
+            >
+              Annulla
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!consentCheckbox || isGrantingConsent}
+              isLoading={isGrantingConsent}
+            >
+              Conferma Consenso
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {/* Modale Visualizzazione QR generato/rotato */}
       {qrDisplay && (
         <QrModal
           isOpen={Boolean(qrDisplay)}
           onClose={() => setQrDisplay(null)}
           token={qrDisplay.token}
-          customerName={`${customer.first_name} ${customer.last_name}`}
+          customerName={`${customer?.first_name || ''} ${customer?.last_name || ''}`.trim()}
           profileName={qrDisplay.profileName}
+          customerEmail={customer?.email || undefined}
+          businessName={activeBusiness?.name}
         />
       )}
     </div>

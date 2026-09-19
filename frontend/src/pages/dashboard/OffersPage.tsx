@@ -1,7 +1,7 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { offersApi, loyaltyApi } from '../../api/services';
-import type { Offer, CardProfile } from '../../types';
+import { offersApi } from '../../api/services';
+import type { Offer } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Select } from '../../components/common/Select';
@@ -10,12 +10,12 @@ import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { generateOperationId } from '../../api/client';
+import { formatOfferBenefit, formatTargetAudience } from '../../utils/formatters';
 
 export const OffersPage: React.FC = () => {
   const { activeBusiness, hasPermission } = useAuth();
 
   const [offers, setOffers] = useState<Offer[]>([]);
-  const [profiles, setProfiles] = useState<CardProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -24,11 +24,10 @@ export const OffersPage: React.FC = () => {
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [discountType, setDiscountType] = useState('percentage');
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountValue, setDiscountValue] = useState<number>(10);
-  const [isVip, setIsVip] = useState(false);
+  const [targetAudience, setTargetAudience] = useState<'vantaggi' | 'vip' | 'vantaggi_vip'>('vantaggi');
   const [isSingleUse, setIsSingleUse] = useState(true);
-  const [profileId, setProfileId] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Modale Elimina Offerta
@@ -43,13 +42,14 @@ export const OffersPage: React.FC = () => {
   const canRedeem = hasPermission('offer.redeem');
 
   const loadOffers = async () => {
-    if (!activeBusiness) return;
+    if (!activeBusiness) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       const list = await offersApi.list(activeBusiness.id, true);
       setOffers(list);
-      const profs = await loyaltyApi.listProfiles();
-      setProfiles(profs);
     } catch {
       setOffers([]);
     } finally {
@@ -67,9 +67,8 @@ export const OffersPage: React.FC = () => {
     setDescription('');
     setDiscountType('percentage');
     setDiscountValue(10);
-    setIsVip(false);
+    setTargetAudience('vantaggi');
     setIsSingleUse(true);
-    setProfileId('');
     setIsFormOpen(true);
   };
 
@@ -77,11 +76,13 @@ export const OffersPage: React.FC = () => {
     setEditingOffer(o);
     setTitle(o.title);
     setDescription(o.description || '');
-    setDiscountType(o.discount_type);
-    setDiscountValue(o.discount_value);
-    setIsVip(o.is_vip);
+    setDiscountType(o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage');
+    setDiscountValue(o.discount_value ?? o.discount_percentage ?? 0);
+    const resolvedAudience = o.target_audience === 'all'
+      ? 'vantaggi_vip'
+      : (o.target_audience || (o.is_vip ? 'vip' : 'vantaggi_vip'));
+    setTargetAudience(resolvedAudience as 'vantaggi' | 'vip' | 'vantaggi_vip');
     setIsSingleUse(o.is_single_use);
-    setProfileId(o.card_profile_id || '');
     setIsFormOpen(true);
   };
 
@@ -96,9 +97,8 @@ export const OffersPage: React.FC = () => {
         description: description.trim() || null,
         discount_type: discountType,
         discount_value: Number(discountValue),
-        is_vip: isVip,
+        target_audience: targetAudience,
         is_single_use: isSingleUse,
-        card_profile_id: profileId ? Number(profileId) : null,
       };
 
       if (editingOffer) {
@@ -150,7 +150,7 @@ export const OffersPage: React.FC = () => {
         type: 'success',
         message: res.idempotent
           ? 'Offerta già applicata in precedenza (operazione idempotente).'
-          : `Offerta "${offerToRedeem.title}" applicata con successo al conto #${res.loyalty_account_id}!`,
+          : `Offerta "${offerToRedeem.title}" (${formatOfferBenefit(offerToRedeem.discount_type, offerToRedeem.discount_value)}) applicata con successo al conto #${res.loyalty_account_id}!`,
       });
       setOfferToRedeem(null);
       setRedeemAccountId('');
@@ -167,8 +167,8 @@ export const OffersPage: React.FC = () => {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Offerte & Promozioni</h1>
-          <p className="page-subtitle">Gestisci sconti standard e vantaggi riservati ai clienti VIP.</p>
+          <h1 className="page-title">Offerte Vantaggi & VIP</h1>
+          <p className="page-subtitle">Crea promozioni dedicate ai clienti Vantaggi, VIP o a entrambi.</p>
         </div>
         {canManage && (
           <Button variant="primary" onClick={handleOpenCreate}>
@@ -181,12 +181,12 @@ export const OffersPage: React.FC = () => {
 
       {offers.length === 0 ? (
         <EmptyState
-          title="Nessuna offerta attiva"
+          title="Nessuna offerta Vantaggi o VIP disponibile"
           description="Crea sconti speciali o promozioni di benvenuto per i tuoi clienti fedeli."
           action={
             canManage ? (
               <Button variant="primary" onClick={handleOpenCreate}>
-                Crea Offerta
+                Nuova Offerta
               </Button>
             ) : undefined
           }
@@ -199,7 +199,7 @@ export const OffersPage: React.FC = () => {
                 <th>ID</th>
                 <th>Titolo Offerta</th>
                 <th>Tipo & Valore</th>
-                <th>Accesso VIP</th>
+                <th>Destinatari</th>
                 <th>Uso</th>
                 <th>Stato</th>
                 <th style={{ textAlign: 'right' }}>Azioni</th>
@@ -215,15 +215,13 @@ export const OffersPage: React.FC = () => {
                   </td>
                   <td>
                     <span className="badge badge-primary">
-                      {o.discount_type === 'percentage' ? `${o.discount_value}%` : `${o.discount_value} €`}
+                      {formatOfferBenefit(o.discount_type, o.discount_value)}
                     </span>
                   </td>
                   <td>
-                    {o.is_vip ? (
-                      <span className="badge badge-vip">Esclusivo VIP</span>
-                    ) : (
-                      <span className="badge badge-secondary">Standard</span>
-                    )}
+                    <span className={`badge ${o.target_audience === 'vip' || o.is_vip ? 'badge-vip' : o.target_audience === 'vantaggi' ? 'badge-secondary' : 'badge-outline'}`}>
+                      {formatTargetAudience(o.target_audience, o.is_vip, o.card_profile_id)}
+                    </span>
                   </td>
                   <td>{o.is_single_use ? 'Monouso' : 'Multiplo'}</td>
                   <td>
@@ -260,7 +258,7 @@ export const OffersPage: React.FC = () => {
       {/* Modale Crea / Modifica */}
       <Modal isOpen={isFormOpen} title={editingOffer ? 'Modifica Offerta' : 'Nuova Offerta'} onClose={() => setIsFormOpen(false)}>
         <form onSubmit={handleSaveOffer}>
-          <Input label="Titolo Offerta *" required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="es. Buono Benvenuto 5€" />
+          <Input label="Titolo Offerta *" required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="es. Sconto Benvenuto 5€" />
 
           <div className="form-group">
             <label className="form-label">Descrizione (opzionale)</label>
@@ -278,29 +276,37 @@ export const OffersPage: React.FC = () => {
               label="Tipo Sconto *"
               options={[
                 { label: 'Percentuale (%)', value: 'percentage' },
-                { label: 'Importo Fisso (€)', value: 'fixed_amount' },
+                { label: 'Importo Fisso (€)', value: 'fixed' },
               ]}
               value={discountType}
-              onChange={(e) => setDiscountType(e.target.value)}
+              onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
             />
             <Input
-              label="Valore Sconto *"
+              label={discountType === 'percentage' ? 'Percentuale Sconto (%) *' : 'Valore Sconto (€) *'}
               type="number"
-              min="0"
+              step={discountType === 'percentage' ? '0.1' : '0.01'}
+              min="0.01"
+              max={discountType === 'percentage' ? '100' : undefined}
               required
               value={discountValue}
               onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)}
             />
           </div>
 
-          <div style={{ margin: '1rem 0', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label className="form-checkbox">
-              <input type="checkbox" checked={isVip} onChange={(e) => setIsVip(e.target.checked)} />
-              <span>
-                <strong>Offerta Esclusiva VIP</strong> (accessibile solo ai conti con profilo VIP)
-              </span>
-            </label>
+          <div style={{ margin: '1rem 0' }}>
+            <Select
+              label="Destinatari Offerta *"
+              options={[
+                { label: 'Solo Vantaggi', value: 'vantaggi' },
+                { label: 'Solo VIP', value: 'vip' },
+                { label: 'Vantaggi e VIP', value: 'vantaggi_vip' },
+              ]}
+              value={targetAudience}
+              onChange={(e) => setTargetAudience(e.target.value as 'vantaggi' | 'vip' | 'vantaggi_vip')}
+            />
+          </div>
 
+          <div style={{ margin: '1rem 0', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label className="form-checkbox">
               <input type="checkbox" checked={isSingleUse} onChange={(e) => setIsSingleUse(e.target.checked)} />
               <span>
@@ -308,16 +314,6 @@ export const OffersPage: React.FC = () => {
               </span>
             </label>
           </div>
-
-          <Select
-            label="Limita a un profilo specifico (opzionale)"
-            options={[
-              { label: 'Tutti i profili abilitati', value: '' },
-              ...profiles.map((p) => ({ label: p.name, value: p.id })),
-            ]}
-            value={profileId}
-            onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : '')}
-          />
 
           <div className="modal-actions">
             <Button type="button" variant="secondary" onClick={() => setIsFormOpen(false)} disabled={isSubmitting}>
@@ -336,9 +332,16 @@ export const OffersPage: React.FC = () => {
           <form onSubmit={handleRedeemOffer}>
             <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
               <div style={{ fontWeight: 700 }}>{offerToRedeem.title}</div>
-              {offerToRedeem.is_vip && <span className="badge badge-vip" style={{ marginTop: '0.25rem' }}>VIP</span>}
+              <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <span className="badge badge-primary">
+                  {formatOfferBenefit(offerToRedeem.discount_type, offerToRedeem.discount_value)}
+                </span>
+                <span className="badge badge-secondary">
+                  {formatTargetAudience(offerToRedeem.target_audience, offerToRedeem.is_vip, offerToRedeem.card_profile_id)}
+                </span>
+              </div>
               {offerToRedeem.is_single_use && (
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-warning)', marginTop: '0.25rem' }}>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-warning)', marginTop: '0.4rem' }}>
                   ⚠️ Offerta monouso: verrà contrassegnata come utilizzata per questo conto.
                 </div>
               )}

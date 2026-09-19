@@ -277,14 +277,14 @@ echo PHP_EOL . "--- 6. Suspensión, Reactivación y Revocación ---" . PHP_EOL;
 $suspendedCard = $cardService->suspendCard($bizA['id'], $activeCard['id']);
 assertCardTest("Tarjeta pasa a estado 'suspended'", $suspendedCard['status'] === 'suspended');
 
-$physCredSuspended = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$activeCard['id']}")->fetchColumn();
+$physCredSuspended = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$activeCard['id']} ORDER BY `id` DESC LIMIT 1")->fetchColumn();
 assertCardTest("Credencial física también queda en estado 'suspended'", $physCredSuspended === 'suspended');
 
 // 6.2 Reactivación de tarjeta suspendida
 $reactivatedCard = $cardService->reactivateCard($bizA['id'], $activeCard['id']);
 assertCardTest("Tarjeta reactivada pasa nuevamente a 'active'", $reactivatedCard['status'] === 'active');
 
-$physCredActive = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$activeCard['id']}")->fetchColumn();
+$physCredActive = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$activeCard['id']} ORDER BY `id` DESC LIMIT 1")->fetchColumn();
 assertCardTest("Credencial física reactivada pasa a 'active'", $physCredActive === 'active');
 
 // 6.3 Revocación de tarjeta física
@@ -294,7 +294,7 @@ $revokedCard = $cardService->revokeCard($bizA['id'], $cardToRevoke['id']);
 assertCardTest("Tarjeta física revocada pasa a 'revoked'", $revokedCard['status'] === 'revoked');
 assertCardTest("Tarjeta física registra revoked_at", !empty($revokedCard['revoked_at']));
 
-$revokedPhysCred = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$cardToRevoke['id']}")->fetchColumn();
+$revokedPhysCred = $pdo->query("SELECT `status` FROM `access_credentials` WHERE `card_id` = {$cardToRevoke['id']} ORDER BY `id` DESC LIMIT 1")->fetchColumn();
 assertCardTest("Credencial física pasa a 'revoked'", $revokedPhysCred === 'revoked');
 
 // Comprobar que la credencial digital del cliente sigue activa e intacta
@@ -314,16 +314,33 @@ assertCardTest("Tarjeta antigua enlaza replaced_by_card_id con nueva tarjeta", (
 
 assertCardTest("Nueva tarjeta pasa a 'active'", $replaceResult['new_card']['status'] === 'active');
 assertCardTest("Nueva tarjeta hereda la misma loyalty_account", (int)$replaceResult['new_card']['loyalty_account_id'] === $loyaltyAccountId);
+assertCardTest("replaceCard devuelve nuevo token físico y public_url", !empty($replaceResult['token']) && !empty($replaceResult['public_url']));
 
 // Comprobar que el token físico anterior ya no es válido
 $oldToken = $batch[0]['token'];
 $viewOldToken = $credentialService->getPublicCredentialView($oldToken);
 assertCardTest("Token físico anterior marcado como no disponible", $viewOldToken['state'] === 'not_available');
 
-// Comprobar que el nuevo token físico es válido y activo
-$newToken = $batch[2]['token'];
+// Comprobar que el nuevo token físico es válido, activo y almacenado como SHA-256 en DB
+$newToken = $replaceResult['token'];
 $viewNewToken = $credentialService->getPublicCredentialView($newToken);
 assertCardTest("Nuevo token físico está activo y resuelve la cuenta", $viewNewToken['state'] === 'active');
+
+$dbNewCred = $pdo->query("SELECT * FROM `access_credentials` WHERE `card_id` = {$newCardToUse['id']} AND `status` = 'active'")->fetch(PDO::FETCH_ASSOC);
+assertCardTest("MariaDB almacena únicamente hash SHA-256 exacto (64 hex) para la nueva tarjeta",
+    $dbNewCred &&
+    $dbNewCred['public_token_hash'] === hash('sha256', $newToken) &&
+    strlen($dbNewCred['public_token_hash']) === 64
+);
+
+// Comprobar que la base de datos nunca almacena el token plano ni cifrado
+$columnsCred = array_column($pdo->query("SHOW COLUMNS FROM `access_credentials`")->fetchAll(PDO::FETCH_ASSOC), 'Field');
+assertCardTest("access_credentials no posee columnas de token en plano ni ciphertext reversible",
+    !in_array('token', $columnsCred, true) &&
+    !in_array('plain_token', $columnsCred, true) &&
+    !in_array('ciphertext', $columnsCred, true) &&
+    in_array('public_token_hash', $columnsCred, true)
+);
 
 // 7.1 Imposibilidad de tener dos credenciales físicas activas simultáneamente
 try {

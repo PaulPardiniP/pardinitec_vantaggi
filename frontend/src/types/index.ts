@@ -1,9 +1,12 @@
-﻿export interface User {
+export interface User {
   id: number;
+  name?: string;
   email: string;
   is_super_admin: boolean;
   status: string;
-  created_at: string;
+  created_at?: string;
+  totp_enabled?: boolean;
+  session_state?: 'active' | 'pending_2fa' | 'pending_2fa_setup';
 }
 
 export interface Business {
@@ -34,6 +37,23 @@ export interface Member {
   joined_at: string;
 }
 
+export interface ConsentHistory {
+  id: number;
+  type: 'privacy' | 'marketing';
+  status: 'granted' | 'revoked';
+  source: string;
+  text_version: string;
+  granted_at: string;
+  revoked_at: string | null;
+}
+
+/** Forma real devuelta por el API: objeto con flags + historial */
+export interface CustomerConsents {
+  privacy_granted: boolean;
+  marketing_granted: boolean;
+  history: ConsentHistory[];
+}
+
 export interface Customer {
   id: number;
   business_id: number;
@@ -43,10 +63,11 @@ export interface Customer {
   email: string | null;
   created_at: string;
   updated_at: string;
-  consents?: Consent[];
+  consents?: CustomerConsents;
   loyalty_accounts?: LoyaltyAccount[];
 }
 
+/** @deprecated Use ConsentHistory instead */
 export interface Consent {
   id: number;
   business_id: number;
@@ -126,12 +147,20 @@ export interface Offer {
   business_id: number;
   title: string;
   description: string | null;
-  discount_type: string;
+  discount_type: 'percentage' | 'fixed';
   discount_value: number;
+  offer_type?: string;
+  discount_percentage?: number;
+  formatted_benefit?: string;
+  target_audience?: 'vantaggi' | 'vip' | 'vantaggi_vip' | 'all';
   is_vip: boolean;
   card_profile_id: number | null;
+  profile_name?: string | null;
+  profile_code?: string | null;
   is_single_use: boolean;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'expired';
+  start_date?: string | null;
+  end_date?: string | null;
   created_at?: string;
 }
 
@@ -139,6 +168,9 @@ export interface Card {
   id: number;
   business_id: number | null;
   loyalty_account_id: number | null;
+  customer_id?: number | null;
+  profile_name?: string | null;
+  profile_code?: string | null;
   design_profile_id: number | null;
   status: 'inventory' | 'issued' | 'active' | 'suspended' | 'revoked' | 'replaced';
   issued_at: string | null;
@@ -150,7 +182,7 @@ export interface Card {
 }
 
 export interface PublicCardView {
-  state: 'active' | 'forbidden' | 'not_available' | 'suspended' | 'inventory' | 'issued';
+  state: 'active' | 'forbidden' | 'not_available' | 'suspended' | 'inventory' | 'issued' | 'revoked' | 'replaced';
   mode?: 'public' | 'staff' | 'super_admin' | 'cross_tenant';
   credential_id?: number;
   credential_type?: string;
@@ -173,13 +205,7 @@ export interface PublicCardView {
     phone?: string;
     email?: string;
   };
-  actions?: {
-    can_adjust_points: boolean;
-    can_redeem_rewards: boolean;
-    can_redeem_offers: boolean;
-  };
   program?: LoyaltyProgram;
-  recent_transactions?: PointsTransaction[];
   next_reward?: {
     id: number;
     name: string;
@@ -189,6 +215,12 @@ export interface PublicCardView {
   } | null;
   rewards?: Reward[];
   offers?: Offer[];
+  recent_transactions?: PointsTransaction[];
+  actions?: {
+    can_adjust_points?: boolean;
+    can_redeem_rewards?: boolean;
+    can_redeem_offers?: boolean;
+  };
   message?: string;
   card_id?: number;
 }

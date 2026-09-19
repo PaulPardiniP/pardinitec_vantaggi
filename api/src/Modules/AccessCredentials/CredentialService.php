@@ -638,6 +638,21 @@ final class CredentialService
             'loyalty_account' => $loyaltyAccountData,
         ];
 
+        if ($hasPoints) {
+            $publicView['program'] = $programService->getProgram($bizId);
+            $rawTx = $pointsService->getAccountTransactions($bizId, $accountId, 1, 20)['data'];
+            $publicView['recent_transactions'] = array_map(static function (array $tx): array {
+                return [
+                    'id' => (int) $tx['id'],
+                    'points' => (int) $tx['points'],
+                    'points_delta' => (int) $tx['points'],
+                    'type' => (string) $tx['type'],
+                    'reason' => $tx['reason'] !== null ? (string) $tx['reason'] : null,
+                    'created_at' => (string) $tx['created_at'],
+                ];
+            }, $rawTx);
+        }
+
         if ($hasRewards) {
             $publicView['next_reward'] = $nextReward;
             $publicView['rewards'] = $availableRewards;

@@ -103,6 +103,51 @@ final class BusinessController
         }
     }
 
+    public function update(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $business = $this->businessService->updateBusiness($session['user_id'], $businessId, $body);
+
+            Response::success('Comercio actualizado exitosamente.', [
+                'data' => $business,
+            ], 200);
+        } catch (ValidationException $e) {
+            Response::error($e->getMessage(), 422, $e->getErrors());
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Error al actualizar el comercio.', 500);
+        }
+    }
+
+    public function toggleStatus(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $status = isset($body['status']) ? (string) $body['status'] : null;
+            $business = $this->businessService->toggleBusinessStatus($session['user_id'], $businessId, $status);
+
+            Response::success('Estado del comercio modificado exitosamente.', [
+                'data' => $business,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Error al cambiar el estado del comercio.', 500);
+        }
+    }
+
     public function listMembers(Request $request, int $businessId): void
     {
         $session = $this->authenticate($request);
@@ -172,6 +217,19 @@ final class BusinessController
             $capabilityService = new \App\Modules\Loyalty\CapabilityService();
             $modules = $capabilityService->getBusinessModules($businessId);
 
+            // Módulos efectivos del plan contratado (ej. campaigns)
+            $planService = new \App\Modules\Plans\PlanService(\App\Core\Database\Connection::get(), new \App\Core\Audit\AuditLogger(\App\Core\Database\Connection::get()));
+            $plan = $planService->getPlanForBusiness($businessId);
+            $planModules = $plan['modules'] ?? [];
+
+            $hasCampaigns = in_array('campaigns', $planModules, true);
+            $modules[] = [
+                'code' => 'campaigns',
+                'name' => 'Campagne di Comunicazione',
+                'description' => 'Invio campagne promozionali e comunicazioni ai clienti',
+                'is_enabled' => $hasCampaigns,
+            ];
+
             Response::success('Moduli del commercio recuperati con successo.', [
                 'data' => $modules,
             ], 200);
@@ -213,6 +271,26 @@ final class BusinessController
             Response::error($e->getMessage(), 403);
         } catch (Throwable $e) {
             Response::error('Errore durante l\'aggiornamento dei moduli.', 500);
+        }
+    }
+
+    public function listPaginated(Request $request): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $search  = trim((string) ($request->getQuery('search') ?? ''));
+            $status  = trim((string) ($request->getQuery('status') ?? 'all'));
+            $page    = max(1, (int) ($request->getQuery('page') ?? 1));
+            $perPage = max(1, min(100, (int) ($request->getQuery('per_page') ?? 25)));
+
+            $result = $this->businessService->listBusinessesPaginated($session['user_id'], $search, $status, $page, $perPage);
+
+            Response::success('Comercios recuperados correctamente.', $result, 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Error al listar comercios paginados.', 500);
         }
     }
 }

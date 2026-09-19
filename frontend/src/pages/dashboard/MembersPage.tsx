@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { businessApi } from '../../api/services';
 import type { Member } from '../../types';
@@ -29,7 +29,10 @@ export const MembersPage: React.FC = () => {
   const canManageMembers = hasPermission('members.manage');
 
   const loadMembers = async () => {
-    if (!activeBusiness) return;
+    if (!activeBusiness) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       const list = await businessApi.listMembers(activeBusiness.id);

@@ -37,7 +37,7 @@ final class AuthorizationService
         // 1. Reconocimiento de Super Admin a nivel de plataforma
         if ($this->isSuperAdmin($userId)) {
             // Verificar existencia del comercio
-            $bizStmt = $this->pdo->prepare("SELECT `id` FROM `businesses` WHERE `id` = :id AND `status` = 'active' LIMIT 1");
+            $bizStmt = $this->pdo->prepare("SELECT `id` FROM `businesses` WHERE `id` = :id LIMIT 1");
             $bizStmt->execute(['id' => $businessId]);
             if ($bizStmt->fetch()) {
                 return [

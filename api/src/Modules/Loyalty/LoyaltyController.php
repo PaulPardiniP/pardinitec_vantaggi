@@ -94,18 +94,53 @@ final class LoyaltyController
 
             $body = $request->getJsonBody();
             $profileCode = $body['profile_code'] ?? ($body['card_profile_id'] ?? 'punti');
+            $issueCredential = filter_var($body['issue_credential'] ?? true, FILTER_VALIDATE_BOOLEAN);
 
-            $account = $this->loyaltyService->createAccount($businessId, $customerId, $profileCode);
-
-            Response::success('Cuenta de fidelización creada exitosamente.', [
-                'data' => $account,
-            ], 201);
+            if ($issueCredential) {
+                $customerService = new \App\Modules\Customers\CustomerService();
+                $res = $customerService->addAccountToCustomer($businessId, $customerId, $profileCode, (int) $session['user_id']);
+                $msg = !empty($res['upgraded'])
+                    ? 'Profilo conto aggiornato a Vantaggi con successo.'
+                    : 'Conto di fidelizzazione creato con successo.';
+                Response::success($msg, [
+                    'data' => $res,
+                ], 201);
+            } else {
+                $account = $this->loyaltyService->createAccount($businessId, $customerId, $profileCode);
+                $msg = !empty($account['upgraded'])
+                    ? 'Profilo conto aggiornato a Vantaggi con successo.'
+                    : 'Conto di fidelizzazione creato con successo.';
+                Response::success($msg, [
+                    'data' => $account,
+                ], 201);
+            }
         } catch (ForbiddenException $e) {
             Response::error($e->getMessage(), 403);
         } catch (InvalidArgumentException $e) {
             Response::error($e->getMessage(), 400);
         } catch (Throwable $e) {
             Response::error('Error al crear cuenta de fidelización.', 500);
+        }
+    }
+
+    public function preview(Request $request, int $businessId, int $accountId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_VIEW);
+
+            $preview = $this->loyaltyService->getAccountPreview($businessId, $accountId);
+
+            Response::success('Anteprima carta recuperata correttamente.', [
+                'data' => $preview,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Error al obtener la anteprima de la carta.', 500);
         }
     }
 }

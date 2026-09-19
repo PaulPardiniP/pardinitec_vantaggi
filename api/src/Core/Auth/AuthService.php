@@ -52,24 +52,24 @@ final class AuthService
         }
 
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 191) {
-            $errors['email'] = 'Debe proporcionar una dirección de correo electrónico válida.';
+            $errors['email'] = 'Debe proporcionar una direcciÃ³n de correo electrÃ³nico vÃ¡lida.';
         }
 
         if (strlen($password) < 8) {
-            $errors['password'] = 'La contraseña debe tener al menos 8 caracteres.';
+            $errors['password'] = 'La contraseÃ±a debe tener al menos 8 caracteres.';
         }
 
         if (!empty($errors)) {
-            $e = new InvalidArgumentException('Datos de registro inválidos.');
-            throw new ValidationException('Datos de registro inválidos.', $errors);
+            $e = new InvalidArgumentException('Datos de registro invÃ¡lidos.');
+            throw new ValidationException('Datos de registro invÃ¡lidos.', $errors);
         }
 
         // Comprobar si el email ya existe
         $checkStmt = $this->pdo->prepare("SELECT `id` FROM `users` WHERE `email` = :email LIMIT 1");
         $checkStmt->execute(['email' => $email]);
         if ($checkStmt->fetch()) {
-            throw new ValidationException('Datos de registro inválidos.', [
-                'email' => 'El correo electrónico ya se encuentra registrado.',
+            throw new ValidationException('Datos de registro invÃ¡lidos.', [
+                'email' => 'El correo electrÃ³nico ya se encuentra registrado.',
             ]);
         }
 
@@ -110,7 +110,7 @@ final class AuthService
         $cleanEmail = strtolower(trim($email));
 
         if ($cleanEmail === '' || $password === '') {
-            throw new InvalidArgumentException('El correo y la contraseña son obligatorios.');
+            throw new InvalidArgumentException('El correo y la contraseÃ±a son obligatorios.');
         }
 
         $stmt = $this->pdo->prepare("SELECT * FROM `users` WHERE `email` = :email LIMIT 1");
@@ -132,13 +132,29 @@ final class AuthService
             $updateHash->execute(['hash' => $newHash, 'id' => $user['id']]);
         }
 
-        // Si ya había una sesión activa en la cookie, la invalidamos/regeneramos
+        // Si ya habÃ­a una sesiÃ³n activa en la cookie, la invalidamos/regeneramos
         if ($existingSessionId !== null && trim($existingSessionId) !== '') {
             $this->sessionManager->destroySession($existingSessionId);
         }
 
+        $isSuperAdmin = (bool) $user['is_super_admin'];
+        $totpEnabled = (bool) ($user['totp_enabled'] ?? false);
+
+        if ($isSuperAdmin) {
+            // Super Admin sin TOTP: sesión restringida (pending_2fa) y configuración obligatoria
+            // Super Admin con TOTP: sesión restringida (pending_2fa) y desafío TOTP
+            $state = 'pending_2fa';
+        } else {
+            // Usuario estándar
+            $state = $totpEnabled ? 'pending_2fa' : 'active';
+        }
+
         // Crear una nueva sesión segura con ID nuevo (Regeneración de sesión)
-        $session = $this->sessionManager->createSession((int) $user['id'], $ipAddress, $userAgent);
+        $session = $this->sessionManager->createSession((int) $user['id'], $ipAddress, $userAgent, $state);
+
+        $clientState = $state === 'pending_2fa'
+            ? (!$totpEnabled ? 'pending_2fa_setup' : 'pending_2fa')
+            : 'active';
 
         return [
             'user' => [
@@ -147,6 +163,8 @@ final class AuthService
                 'email' => (string) $user['email'],
                 'status' => (string) $user['status'],
                 'is_super_admin' => (bool) $user['is_super_admin'],
+                'totp_enabled' => $totpEnabled,
+                'session_state' => $clientState,
             ],
             'session_token' => $session['id'],
             'csrf_token' => $session['csrf_token'],
@@ -158,8 +176,80 @@ final class AuthService
         $this->sessionManager->destroySession($sessionId);
     }
 
-    public function getCurrentSession(?string $sessionId = null): ?array
+    public function getCurrentSession(?string $sessionId = null, bool $allowPending2Fa = false): ?array
     {
-        return $this->sessionManager->validateSession($sessionId);
+        $s = $this->sessionManager->validateSession($sessionId);
+        if ($s && $s['state'] === 'pending_2fa' && !$allowPending2Fa) {
+            return null;
+        }
+        return $s;
+    }
+
+    public function verifyTotpChallenge(string $sessionId, string $code): bool
+    {
+        $session = $this->sessionManager->validateSession($sessionId);
+        if (!$session || $session['state'] !== 'pending_2fa') {
+            return false;
+        }
+
+        $userId = $session['user_id'];
+        
+        $stmt = $this->pdo->prepare("SELECT * FROM `totp_secrets` WHERE `user_id` = ? AND `is_active` = 1");
+        $stmt->execute([$userId]);
+        $totp = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$totp) {
+            return false;
+        }
+
+        try {
+            $secret = \App\Core\Security\Totp::decryptSecret($totp['secret_encrypted']);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        if (\App\Core\Security\Totp::verify((string)$secret, $code)) {
+            $upd = $this->pdo->prepare("UPDATE `sessions` SET `state` = 'active' WHERE `id` = ?");
+            $upd->execute([$session['token_hash']]);
+            return true;
+        }
+
+        return false;
+    }
+
+    public function consumeRecoveryCode(string $sessionId, string $code): bool
+    {
+        $session = $this->sessionManager->validateSession($sessionId);
+        if (!$session || $session['state'] !== 'pending_2fa') {
+            return false;
+        }
+
+        $userId = $session['user_id'];
+        
+        $stmt = $this->pdo->prepare("SELECT * FROM `totp_secrets` WHERE `user_id` = ? AND `is_active` = 1");
+        $stmt->execute([$userId]);
+        $totp = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$totp || empty($totp['recovery_codes_hash'])) {
+            return false;
+        }
+
+        $hashes = json_decode($totp['recovery_codes_hash'], true);
+        $used = $totp['recovery_codes_used'] ? json_decode($totp['recovery_codes_used'], true) : [];
+
+        foreach ($hashes as $index => $hash) {
+            if (!isset($used[$index]) && password_verify($code, $hash)) {
+                $used[$index] = date('Y-m-d H:i:s');
+                $updTotp = $this->pdo->prepare("UPDATE `totp_secrets` SET `recovery_codes_used` = ? WHERE `id` = ?");
+                $updTotp->execute([json_encode($used), $totp['id']]);
+
+                $upd = $this->pdo->prepare("UPDATE `sessions` SET `state` = 'active' WHERE `id` = ?");
+                $upd->execute([$session['token_hash']]);
+                
+                return true;
+            }
+        }
+
+        return false;
     }
 }

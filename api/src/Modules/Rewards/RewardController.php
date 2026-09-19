@@ -184,7 +184,11 @@ final class RewardController
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::REWARD_REDEEM);
 
             $body = $request->getJsonBody();
+            if (($body['delivery_confirmed'] ?? false) !== true) {
+                Response::error('La conferma di avvenuta consegna del premio è obbligatoria.', 422);
+            }
             $operationId = isset($body['operation_id']) ? trim((string) $body['operation_id']) : '';
+            $notes = isset($body['notes']) && trim((string) $body['notes']) !== '' ? trim((string) $body['notes']) : null;
 
             if ($operationId === '') {
                 Response::error('Il campo operation_id è obbligatorio per garantire l\'idempotenza del riscatto.', 422);
@@ -195,7 +199,8 @@ final class RewardController
                 $loyaltyAccountId,
                 $rewardId,
                 $operationId,
-                (int) $session['user_id']
+                (int) $session['user_id'],
+                $notes
             );
 
             $msg = $result['idempotent']

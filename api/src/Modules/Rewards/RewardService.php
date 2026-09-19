@@ -217,7 +217,8 @@ final class RewardService
         int $loyaltyAccountId,
         int $rewardId,
         string $operationId,
-        ?int $actorUserId = null
+        ?int $actorUserId = null,
+        ?string $notes = null
     ): array {
         $operationId = trim($operationId);
         if ($operationId === '') {
@@ -303,7 +304,10 @@ final class RewardService
                 'id' => $loyaltyAccountId,
             ]);
 
-            // Registrar en el ledger inmutable de puntos
+            $cleanNotes = $notes !== null ? trim($notes) : null;
+            $txReason = "Riscatto premio: {$reward['name']}";
+
+            // Registrar en el ledger inmutable de puntos (sin notas internas para preservar privacidad pública)
             $txStmt = $this->pdo->prepare("
                 INSERT INTO `points_transactions` (
                     `business_id`, `loyalty_account_id`, `actor_user_id`, `type`, `points`,
@@ -319,18 +323,18 @@ final class RewardService
                 'actor_id' => $actorUserId,
                 'points' => -$pointsCost,
                 'balance_after' => $newBalance,
-                'reason' => "Riscatto premio: {$reward['name']}",
+                'reason' => $txReason,
                 'operation_id' => 'pts_' . $operationId,
             ]);
 
-            // Registrar en reward_redemptions
+            // Registrar en reward_redemptions con notas internas y timestamp de entrega confirmada
             $redemptStmt = $this->pdo->prepare("
                 INSERT INTO `reward_redemptions` (
                     `business_id`, `loyalty_account_id`, `reward_id`, `points_spent`,
-                    `actor_user_id`, `operation_id`, `created_at`
+                    `notes`, `delivered_at`, `actor_user_id`, `operation_id`, `created_at`
                 ) VALUES (
                     :business_id, :account_id, :reward_id, :points_spent,
-                    :actor_id, :operation_id, UTC_TIMESTAMP()
+                    :notes, UTC_TIMESTAMP(), :actor_id, :operation_id, UTC_TIMESTAMP()
                 )
             ");
             $redemptStmt->execute([
@@ -338,6 +342,7 @@ final class RewardService
                 'account_id' => $loyaltyAccountId,
                 'reward_id' => $rewardId,
                 'points_spent' => $pointsCost,
+                'notes' => !empty($cleanNotes) ? $cleanNotes : null,
                 'actor_id' => $actorUserId,
                 'operation_id' => $operationId,
             ]);
@@ -461,6 +466,7 @@ final class RewardService
             'reward_id' => (int) $row['reward_id'],
             'reward_name' => $row['reward_name'] ?? null,
             'points_spent' => (int) $row['points_spent'],
+            'notes' => isset($row['notes']) && $row['notes'] !== null ? (string) $row['notes'] : null,
             'actor_user_id' => $row['actor_user_id'] !== null ? (int) $row['actor_user_id'] : null,
             'actor_name' => $row['actor_name'] ?? null,
             'operation_id' => (string) $row['operation_id'],

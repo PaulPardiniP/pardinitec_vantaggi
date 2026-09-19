@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Spinner } from './Spinner';
@@ -21,7 +21,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireSuperAdmin = false,
   requiredPermission,
 }) => {
-  const { isAuthenticated, isSuperAdmin, hasPermission, isLoading } = useAuth();
+  const { isAuthenticated, isSuperAdmin, hasPermission, isLoading, user, sessionState } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -30,6 +30,14 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         <Spinner size="lg" text="Caricamento sessione..." />
       </div>
     );
+  }
+
+  if (user && sessionState === 'pending_2fa_setup') {
+    return <Navigate to="/2fa?mode=setup" replace />;
+  }
+
+  if (user && sessionState === 'pending_2fa') {
+    return <Navigate to="/2fa" replace />;
   }
 
   if (!isAuthenticated) {

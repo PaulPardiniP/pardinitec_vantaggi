@@ -18,7 +18,7 @@ use App\Modules\Offers\OfferController;
 use App\Modules\Points\PointsController;
 use App\Modules\Rewards\RewardController;
 
-// Configuración de CORS segura: sin comodín '*', compatible con cookies
+// ConfiguraciÃ³n de CORS segura: sin comodÃ­n '*', compatible con cookies
 $defaultAllowedOrigins = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
@@ -71,7 +71,7 @@ if ($method === 'GET' && $cleanPath === '/api/v1/health') {
     ]);
 }
 
-// Rutas de Autenticación
+// Rutas de AutenticaciÃ³n
 $authController = new AuthController();
 
 if ($method === 'POST' && $cleanPath === '/api/v1/auth/register') {
@@ -94,7 +94,7 @@ if ($method === 'GET' && $cleanPath === '/api/v1/auth/csrf') {
     $authController->csrf($request);
 }
 
-// Rutas de Super Admin (Módulo Cards - Inventario y Asignación de Tarjetas)
+// Rutas de Super Admin (MÃ³dulo Cards - Inventario y AsignaciÃ³n de Tarjetas)
 $adminCardController = new AdminCardController();
 
 if ($method === 'POST' && $cleanPath === '/api/v1/admin/cards/batch') {
@@ -117,7 +117,7 @@ if ($method === 'GET' && preg_match('#^/api/v1/admin/cards/(\d+)$#', $cleanPath,
     $adminCardController->get($request, (int) $matches[1]);
 }
 
-// Rutas de Comercios y Membresías (Módulo Businesses)
+// Rutas de Comercios y MembresÃ­as (MÃ³dulo Businesses)
 $businessController = new BusinessController();
 
 if ($method === 'POST' && $cleanPath === '/api/v1/businesses') {
@@ -130,6 +130,14 @@ if ($method === 'GET' && $cleanPath === '/api/v1/businesses') {
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)$#', $cleanPath, $matches)) {
     $businessController->get($request, (int) $matches[1]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)$#', $cleanPath, $matches)) {
+    $businessController->update($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/toggle-status$#', $cleanPath, $matches)) {
+    $businessController->toggleStatus($request, (int) $matches[1]);
 }
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/members$#', $cleanPath, $matches)) {
@@ -150,6 +158,11 @@ if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/modules$#', $cle
 
 if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/modules$#', $cleanPath, $matches)) {
     $businessController->updateModules($request, (int) $matches[1]);
+}
+
+// Ruta Super Admin: búsqueda paginada de comercios
+if ($method === 'GET' && $cleanPath === '/api/v1/admin/businesses') {
+    $businessController->listPaginated($request);
 }
 
 // Rutas de Tarjetas Físicas del Negocio (Módulo Cards)
@@ -187,14 +200,14 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/cards/(\d+)/rea
     $cardController->reassign($request, (int) $matches[1], (int) $matches[2]);
 }
 
-// Rutas de Perfiles de Fidelización (Módulo Loyalty)
+// Rutas de Perfiles de FidelizaciÃ³n (MÃ³dulo Loyalty)
 $loyaltyController = new LoyaltyController();
 
 if ($method === 'GET' && $cleanPath === '/api/v1/card-profiles') {
     $loyaltyController->listProfiles($request);
 }
 
-// Rutas de Clientes y Consentimientos (Módulo Customers)
+// Rutas de Clientes y Consentimientos (MÃ³dulo Customers)
 $customerController = new CustomerController();
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/onboard$#', $cleanPath, $matches)) {
@@ -221,6 +234,10 @@ if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/
     $customerController->getConsents($request, (int) $matches[1], (int) $matches[2]);
 }
 
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/consents/grant-marketing$#', $cleanPath, $matches)) {
+    $customerController->grantMarketing($request, (int) $matches[1], (int) $matches[2]);
+}
+
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/consents/revoke-marketing$#', $cleanPath, $matches)) {
     $customerController->revokeMarketing($request, (int) $matches[1], (int) $matches[2]);
 }
@@ -238,7 +255,11 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)
     $loyaltyController->createAccount($request, (int) $matches[1], (int) $matches[2]);
 }
 
-// Rutas de Credenciales de Acceso (Módulo AccessCredentials)
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/preview$#', $cleanPath, $matches)) {
+    $loyaltyController->preview($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas de Credenciales de Acceso (MÃ³dulo AccessCredentials)
 $credentialController = new CredentialController();
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/credentials$#', $cleanPath, $matches)) {
@@ -257,7 +278,7 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d
     $credentialController->rotate($request, (int) $matches[1], (int) $matches[2]);
 }
 
-// Rutas de Puntos y Programas de Fidelización (Módulo Points)
+// Rutas de Puntos y Programas de FidelizaciÃ³n (MÃ³dulo Points)
 $pointsController = new PointsController();
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-program$#', $cleanPath, $matches)) {
@@ -280,7 +301,7 @@ if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts
     $pointsController->listTransactions($request, (int) $matches[1], (int) $matches[2]);
 }
 
-// Rutas de Premios (Módulo Rewards)
+// Rutas de Premios (MÃ³dulo Rewards)
 $rewardController = new RewardController();
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/rewards$#', $cleanPath, $matches)) {
@@ -307,7 +328,7 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-account
     $rewardController->redeem($request, (int) $matches[1], (int) $matches[2], (int) $matches[3]);
 }
 
-// Rutas de Ofertas (Módulo Offers)
+// Rutas de Ofertas (MÃ³dulo Offers)
 $offerController = new OfferController();
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/offers$#', $cleanPath, $matches)) {
@@ -334,7 +355,7 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-account
     $offerController->redeem($request, (int) $matches[1], (int) $matches[2], (int) $matches[3]);
 }
 
-// Rutas de Resolución Pública Segura (/c/<token> y /api/v1/public/cards/<token>)
+// Rutas de ResoluciÃ³n PÃºblica Segura (/c/<token> y /api/v1/public/cards/<token>)
 $publicCardController = new PublicCardController();
 
 if ($method === 'GET' && (
@@ -345,5 +366,82 @@ if ($method === 'GET' && (
     $publicCardController->resolve($request, $matches[1]);
 }
 
+// Etapa 5 Routes
+$auditLogger = new \App\Core\Audit\AuditLogger(\App\Core\Database\Connection::get());
+$planService = new \App\Modules\Plans\PlanService(\App\Core\Database\Connection::get(), $auditLogger);
+$planController = new \App\Modules\Plans\PlanController($planService);
+$auditController = new \App\Modules\Audit\AuditController(\App\Core\Database\Connection::get());
+$campaignService = new \App\Modules\Campaigns\CampaignService(\App\Core\Database\Connection::get(), $auditLogger);
+$campaignController = new \App\Modules\Campaigns\CampaignController($campaignService);
+
+if ($method === 'GET' && $cleanPath === '/api/v1/admin/plans') {
+    $planController->list($request);
+}
+if ($method === 'POST' && $cleanPath === '/api/v1/admin/plans') {
+    $planController->create($request);
+}
+if ($method === 'PUT' && preg_match('#^/api/v1/admin/plans/(\d+)$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $planController->update($request);
+}
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/plan$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $planController->assignToBusiness($request);
+}
+
+if ($method === 'GET' && $cleanPath === '/api/v1/admin/audit-logs') {
+    $auditController->listGlobal($request);
+}
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/audit-logs$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $auditController->listForBusiness($request);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/campaigns$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $campaignController->list($request);
+}
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/campaigns$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $campaignController->create($request);
+}
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/campaigns/(\d+)$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $request->setRouteParam('campaignId', $matches[2]);
+    $campaignController->update($request);
+}
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/campaigns/(\d+)/confirm$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $request->setRouteParam('campaignId', $matches[2]);
+    $campaignController->confirm($request);
+}
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/campaigns/(\d+)/cancel$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $request->setRouteParam('campaignId', $matches[2]);
+    $campaignController->cancel($request);
+}
+
+if ($method === 'POST' && $cleanPath === '/api/v1/auth/2fa/setup') {
+    $authController->setup2fa($request);
+}
+if ($method === 'POST' && $cleanPath === '/api/v1/auth/2fa/verify-setup') {
+    $authController->verify2faSetup($request);
+}
+if ($method === 'POST' && $cleanPath === '/api/v1/auth/2fa/challenge') {
+    $authController->challenge2fa($request);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/privacy/export$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $request->setRouteParam('customerId', $matches[2]);
+    $customerController->export($request);
+}
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/privacy/anonymize$#', $cleanPath, $matches)) {
+    $request->setRouteParam('id', $matches[1]);
+    $request->setRouteParam('customerId', $matches[2]);
+    $customerController->anonymize($request);
+}
+
 // Ruta no encontrada
 Response::error('Endpoint no encontrado', 404);
+

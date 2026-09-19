@@ -1,5 +1,6 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 import { LoginPage } from './pages/auth/LoginPage';
+import { HomePage } from './pages/public/HomePage';
 import { PublicCardPage } from './pages/public/PublicCardPage';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AdminLayout } from './layouts/AdminLayout';
@@ -14,16 +15,23 @@ import { OffersPage } from './pages/dashboard/OffersPage';
 import { CardsPage } from './pages/dashboard/CardsPage';
 import { MembersPage } from './pages/dashboard/MembersPage';
 import { SettingsPage } from './pages/dashboard/SettingsPage';
+import { CampaignsPage } from './pages/dashboard/CampaignsPage';
+
+import { LoyaltyAccountPreviewPage } from './pages/dashboard/LoyaltyAccountPreviewPage';
 
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage';
 import { AdminBusinessesPage } from './pages/admin/AdminBusinessesPage';
 import { AdminCardsPage } from './pages/admin/AdminCardsPage';
+import { AdminPlansPage } from './pages/admin/AdminPlansPage';
+import { AdminAuditPage } from './pages/admin/AdminAuditPage';
+
+import { TwoFactorPage } from './pages/auth/TwoFactorPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/dashboard" replace />,
+    element: <HomePage />,
   },
   {
     path: '/login',
@@ -44,12 +52,14 @@ export const router = createBrowserRouter([
       { index: true, element: <OverviewPage /> },
       { path: 'customers', element: <CustomersPage /> },
       { path: 'customers/:id', element: <CustomerDetailPage /> },
+      { path: 'loyalty-accounts/:accountId/preview', element: <LoyaltyAccountPreviewPage /> },
       { path: 'points', element: <PointsPage /> },
       { path: 'rewards', element: <RewardsPage /> },
       { path: 'offers', element: <OffersPage /> },
       { path: 'cards', element: <CardsPage /> },
       { path: 'members', element: <MembersPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: 'campaigns', element: <CampaignsPage /> },
     ],
   },
   {
@@ -63,10 +73,10 @@ export const router = createBrowserRouter([
       { index: true, element: <AdminOverviewPage /> },
       { path: 'businesses', element: <AdminBusinessesPage /> },
       { path: 'cards', element: <AdminCardsPage /> },
+      { path: 'plans', element: <AdminPlansPage /> },
+      { path: 'audit', element: <AdminAuditPage /> },
     ],
   },
-  {
-    path: '*',
-    element: <NotFoundPage />,
-  },
+  { path: '/2fa', element: <TwoFactorPage /> },
+  { path: '*', element: <NotFoundPage /> },
 ]);

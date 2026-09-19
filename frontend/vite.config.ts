@@ -12,16 +12,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:8088',
         changeOrigin: true,
       },
-      '/c': {
-        target: 'http://127.0.0.1:8088',
-        changeOrigin: true,
-      },
     },
   },
   test: {
     environment: 'jsdom',
     globals: true,
-    pool: 'threads',
+    pool: 'forks',
     setupFiles: './src/test/setup.ts',
     typecheck: {
       tsconfig: './tsconfig.test.json',

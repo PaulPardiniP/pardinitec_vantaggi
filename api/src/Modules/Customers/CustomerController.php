@@ -61,7 +61,7 @@ final class CustomerController
             $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_EDIT);
 
             $body = $request->getJsonBody();
-            $result = $this->customerService->onboardCustomer($businessId, $body);
+            $result = $this->customerService->onboardCustomer($businessId, $body, (int) $session['user_id']);
 
             Response::success('Cliente y credencial digital registrados exitosamente.', [
                 'data' => $result,
@@ -214,6 +214,80 @@ final class CustomerController
             Response::error($e->getMessage(), 404);
         } catch (Throwable $e) {
             Response::error('Error al revocar consentimiento de marketing.', 500);
+        }
+    }
+
+    public function grantMarketing(Request $request, int $businessId, int $customerId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_EDIT);
+
+            $body = $request->getJsonBody();
+            if (($body['confirmed'] ?? false) !== true) {
+                Response::error('La conferma esplicita del consenso marketing è obbligatoria.', 422);
+            }
+            $source = (string) ($body['source'] ?? 'in_person');
+            $privacyPolicyVersion = (string) ($body['privacy_policy_version'] ?? 'v1.0');
+
+            $consent = $this->customerService->grantMarketingConsent(
+                $businessId,
+                $customerId,
+                $source,
+                $privacyPolicyVersion,
+                (int) $session['user_id']
+            );
+
+            Response::success('Consenso marketing acquisito con successo.', [
+                'data' => $consent,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'acquisizione del consenso marketing.', 500);
+        }
+    }
+
+    public function export(Request $request): void
+    {
+        $session = $this->authenticate($request);
+        $businessId = (int) $request->getRouteParam('id');
+        $customerId = (int) $request->getRouteParam('customerId');
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_VIEW);
+            $data = $this->customerService->exportCustomerData($businessId, $customerId);
+            Response::success('Dati cliente esportati con successo.', ['data' => $data], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'esportazione dei dati cliente.', 500);
+        }
+    }
+
+    public function anonymize(Request $request): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+        $businessId = (int) $request->getRouteParam('id');
+        $customerId = (int) $request->getRouteParam('customerId');
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_EDIT);
+            $this->customerService->anonymizeCustomer($businessId, $customerId, (int) $session['user_id']);
+            Response::success('Cliente anonimizzato con successo.', [], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'anonimizzazione del cliente.', 500);
         }
     }
 }

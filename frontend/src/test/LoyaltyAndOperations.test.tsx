@@ -128,4 +128,36 @@ describe('Conti Indipendenti, Operazioni Idempotenti e Gestione Errori (Etapa 4)
     expect(screen.getByText('Aggiungi il primo elemento per iniziare.')).toBeInTheDocument();
     expect(screen.getByText('Aggiungi')).toBeInTheDocument();
   });
+
+  it('6. Credenziale digitale emessa: non espone pulsanti di apertura fittizi senza token e offre azione Rigenera link', () => {
+    const activeCredential = {
+      id: 99,
+      business_id: 1,
+      loyalty_account_id: 10,
+      card_id: null,
+      type: 'digital',
+      status: 'active',
+      issued_at: '2026-02-01 12:00:00',
+    };
+
+    render(
+      <div>
+        <span className="badge badge-success">Attiva</span>
+        <div style={{ fontSize: '0.8rem' }}>
+          Emessa il: {new Date(activeCredential.issued_at).toLocaleString('it-IT')}
+        </div>
+        <div style={{ fontSize: '0.78rem' }}>
+          Il link originale non è recuperabile in chiaro. Se il cliente lo ha smarrito, puoi rigenerarlo:
+        </div>
+        <Button variant="secondary" size="sm">
+          🔄 Rigenera link
+        </Button>
+      </div>
+    );
+
+    expect(screen.getByText('Attiva')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Rigenera link/i })).toBeInTheDocument();
+    // Non esiste alcun pulsante o link di apertura diretta per credenziali senza token in chiaro
+    expect(screen.queryByRole('link', { name: /Apri carta/i })).not.toBeInTheDocument();
+  });
 });

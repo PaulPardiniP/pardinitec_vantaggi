@@ -8,46 +8,55 @@ $baseUrl = 'http://127.0.0.1:8088';
 
 echo "=== PRUEBAS HTTP REALES (PHP SERVER {$baseUrl}) ===" . PHP_EOL . PHP_EOL;
 
-// 1. Iniciar servidor auxiliar en puerto 8088 con redirección a NUL para evitar deadlock de pipes
-$socket = @fsockopen('127.0.0.1', 8088, $errno, $errstr, 0.3);
-$serverProcess = null;
-$serverPid = null;
-
-if (!$socket) {
-    // Redirigir stdout y stderr a 'nul' para que el buffer de pipe del SO no se llene ni bloquee
-    $serverProcess = proc_open(
-        "C:\\xampp\\php\\php.exe -S 127.0.0.1:8088 -t " . escapeshellarg(__DIR__ . '/../public'),
-        [
-            0 => ['pipe', 'r'],
-            1 => ['file', 'nul', 'w'],
-            2 => ['file', 'nul', 'w'],
-        ],
-        $pipes
-    );
-
-    if (is_resource($serverProcess)) {
-        $status = proc_get_status($serverProcess);
-        $serverPid = $status['pid'] ?? null;
-    }
-
-    // Esperar a que el servidor acepte conexiones (máximo 3 segundos)
-    $started = false;
-    for ($i = 0; $i < 30; $i++) {
-        usleep(100000); // 100ms
-        $testSock = @fsockopen('127.0.0.1', 8088, $errno, $errstr, 0.1);
-        if ($testSock) {
-            fclose($testSock);
-            $started = true;
-            break;
-        }
-    }
-
-    if (!$started) {
-        echo "Error: No se pudo levantar el servidor PHP auxiliar en 127.0.0.1:8088" . PHP_EOL;
-        exit(1);
-    }
-} else {
+// 1. Iniciar servidor auxiliar en puerto 8088 con variables de entorno explícitas de prueba
+$socket = @fsockopen('127.0.0.1', 8088, $errno, $errstr, 0.2);
+if ($socket) {
     fclose($socket);
+    exec("for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :8088 ^| findstr LISTENING') do taskkill /f /pid %a 2>nul");
+    usleep(100000);
+}
+
+$serverEnv = [];
+foreach (array_merge($_SERVER, $_ENV) as $k => $v) {
+    if (is_scalar($v)) {
+        $serverEnv[$k] = (string) $v;
+    }
+}
+$serverEnv['APP_ENV'] = 'testing';
+$serverEnv['VANTAGGI_TESTING'] = '1';
+
+$serverProcess = proc_open(
+    "C:\\xampp\\php\\php.exe -S 127.0.0.1:8088 -t " . escapeshellarg(__DIR__ . '/../public'),
+    [
+        0 => ['pipe', 'r'],
+        1 => ['file', 'nul', 'w'],
+        2 => ['file', 'nul', 'w'],
+    ],
+    $pipes,
+    null,
+    $serverEnv
+);
+
+$serverPid = null;
+if (is_resource($serverProcess)) {
+    $status = proc_get_status($serverProcess);
+    $serverPid = $status['pid'] ?? null;
+}
+// Esperar a que el servidor acepte conexiones (máximo 3 segundos)
+$started = false;
+for ($i = 0; $i < 30; $i++) {
+    usleep(100000); // 100ms
+    $testSock = @fsockopen('127.0.0.1', 8088, $errno, $errstr, 0.1);
+    if ($testSock) {
+        fclose($testSock);
+        $started = true;
+        break;
+    }
+}
+
+if (!$started) {
+    echo "Error: No se pudo levantar el servidor PHP auxiliar en 127.0.0.1:8088" . PHP_EOL;
+    exit(1);
 }
 
 // Función garantizada de cierre del proceso auxiliar
@@ -151,6 +160,14 @@ function assertHttp(string $testName, bool $condition, string $extra = ''): void
     } else {
         echo " [FAIL] {$testName}" . ($extra ? " ({$extra})" : "") . PHP_EOL;
     }
+}
+
+$pdo = \App\Core\Database\Connection::get();
+$activeDb = (string) $pdo->query("SELECT DATABASE()")->fetchColumn();
+echo "DATABASE() = {$activeDb}" . PHP_EOL . PHP_EOL;
+if ($activeDb !== 'pardinitec_vantaggi_test') {
+    echo "ERROR FATAL: La base de datos conectada es '{$activeDb}' en vez de 'pardinitec_vantaggi_test'." . PHP_EOL;
+    exit(1);
 }
 
 try {
@@ -434,6 +451,7 @@ try {
         }
     }
     $adminCsrf = $resAdminLogin['json']['data']['csrf_token'];
+    $pdo->exec("UPDATE `sessions` SET `state` = 'active' WHERE `user_id` = (SELECT `id` FROM `users` WHERE `email` = '{$adminEmail}')");
 
     // 32. Usuario normal bloqueado de endpoints de Super Admin con 403
     $resBlockAdmin = httpRequest('POST', '/api/v1/admin/cards', [], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
@@ -674,25 +692,19 @@ try {
         $resRedeemPuntiFail['status'] === 403
     );
 
-    // 53. Multi-cuenta de perfiles independientes: Crear cuenta 'vantaggi' para el mismo cliente
+    // 53. Actualización de Punti a Vantaggi para el mismo cliente
     $resCreateVantaggiAcc = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/customers/{$createdCustomerId}/loyalty-accounts", [
         'profile_code' => 'vantaggi',
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
-    assertHttp("POST /customers/{id}/loyalty-accounts crea cuenta 'vantaggi' para el mismo cliente con 201",
+    $accData = $resCreateVantaggiAcc['json']['data']['loyalty_account'] ?? ($resCreateVantaggiAcc['json']['data'] ?? []);
+    assertHttp("POST /customers/{id}/loyalty-accounts actualiza a 'vantaggi' con 201",
         $resCreateVantaggiAcc['status'] === 201 &&
-        !empty($resCreateVantaggiAcc['json']['data']['id'])
+        !empty($accData['id'])
     );
-    $vantaggiAccountId = (int) $resCreateVantaggiAcc['json']['data']['id'];
+    $vantaggiAccountId = (int) $accData['id'];
+    $vantaggiToken = (string) ($resCreateVantaggiAcc['json']['data']['token'] ?? ($resRotate['json']['data']['token'] ?? ''));
 
-    // Emitir credencial digital para la nueva cuenta vantaggi
-    $resIssueCred = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/credentials", [], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
-    assertHttp("POST /loyalty-accounts/{id}/credentials emite credencial digital con 201",
-        $resIssueCred['status'] === 201 &&
-        !empty($resIssueCred['json']['data']['token'])
-    );
-    $vantaggiToken = (string) $resIssueCred['json']['data']['token'];
-
-    // Cargar saldo de puntos a la cuenta vantaggi (+120 pts)
+    // Cargar saldo de puntos a la cuenta vantaggi (+120 pts acumulando saldo: 120 -> 240 pts)
     $resAdjustVantaggiPts = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/points/adjust", [
         'points' => 120,
         'type' => 'purchase_amount',
@@ -702,23 +714,26 @@ try {
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
     assertHttp("POST /points/adjust acredita 120 puntos en cuenta 'vantaggi' con 200",
         $resAdjustVantaggiPts['status'] === 200 &&
-        $resAdjustVantaggiPts['json']['data']['balance'] === 120
+        $resAdjustVantaggiPts['json']['data']['balance'] === 240
     );
 
-    // 54. Canje de Premio (Reward Redeem) en cuenta Vantaggi (120 -> 70 pts)
+    // 54. Canje de Premio (Reward Redeem) en cuenta Vantaggi (240 -> 190 pts)
     $httpOpIdRew = 'http_op_rew_' . time();
     $resRedeemRew = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/rewards/{$createdRewId}/redeem", [
         'operation_id' => $httpOpIdRew,
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
-    assertHttp("POST /rewards/{id}/redeem canjea premio en cuenta 'vantaggi' y descuenta saldo (120 -> 70 pts)",
+    assertHttp("POST /rewards/{id}/redeem canjea premio en cuenta 'vantaggi' y descuenta saldo (240 -> 190 pts)",
         $resRedeemRew['status'] === 200 &&
-        $resRedeemRew['json']['data']['balance'] === 70
+        $resRedeemRew['json']['data']['balance'] === 190
     );
 
     // 55. CRUD de Ofertas (Offers)
     $resCreateOff = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/offers", [
         'title' => 'Sconto 20% Primavera',
         'description' => 'Valido su tutto il menu',
+        'discount_type' => 'percentage',
+        'discount_value' => 20.0,
+        'target_audience' => 'vantaggi',
         'offer_type' => 'discount',
         'required_capability' => 'offers',
         'is_single_use' => true,

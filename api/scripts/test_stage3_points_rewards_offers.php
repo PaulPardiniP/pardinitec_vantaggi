@@ -290,6 +290,41 @@ assertStage3Test("Saldo permanece íntegro e intacto tras el rechazo (80 pts)", 
 $vipBalance = (int) $pdo->query("SELECT `balance` FROM `loyalty_accounts` WHERE `id` = {$accVipId}")->fetchColumn();
 assertStage3Test("Cuenta VIP del Cliente 1 no fue alterada por los puntos de su cuenta Punti (saldo VIP = 0)", $vipBalance === 0);
 
+// 6.7 Acreditación +10 y Corrección -5 (Saldo final = 5 y dos movimientos en ledger)
+$onboardTest = $customerService->onboardCustomer($bizA['id'], [
+    'first_name' => 'Test',
+    'last_name' => 'PuntiTenFive',
+    'phone' => '+39033333333',
+    'email' => "test_tenfive_{$timeSuffix}@test.com",
+    'card_profile' => 'punti',
+    'privacy_accepted' => true,
+]);
+$testAccId = $onboardTest['loyalty_account']['id'];
+assertStage3Test("Cuenta de prueba creada con saldo inicial 0", (int) $onboardTest['loyalty_account']['balance'] === 0);
+
+// Paso 1: Acreditar +10
+$opPlus10 = 'op_plus10_' . microtime(true);
+$resPlus10 = $pointsService->adjustPoints($bizA['id'], $testAccId, 10, 'manual_adjustment', 'Acquisto in cassa', $opPlus10, $staffAId);
+assertStage3Test("Acreditación de +10 puntos resulta en saldo 10", $resPlus10['balance'] === 10);
+
+// Paso 2: Corrección -5
+$opMinus5 = 'op_minus5_' . microtime(true);
+$resMinus5 = $pointsService->adjustPoints($bizA['id'], $testAccId, -5, 'correction', 'Rettifica errore scontrino', $opMinus5, $staffAId);
+assertStage3Test("Corrección de -5 puntos resulta en saldo 5", $resMinus5['balance'] === 5);
+
+// Paso 3: Verificar saldo en base de datos y existencia de ambos movimientos
+$finalDbBalance = (int) $pdo->query("SELECT `balance` FROM `loyalty_accounts` WHERE `id` = {$testAccId}")->fetchColumn();
+$stmtTx = $pdo->prepare("SELECT `points`, `balance_after`, `reason` FROM `points_transactions` WHERE `loyalty_account_id` = :acc_id ORDER BY `id` ASC");
+$stmtTx->execute(['acc_id' => $testAccId]);
+$testTxs = $stmtTx->fetchAll(PDO::FETCH_ASSOC);
+
+assertStage3Test("Saldo final en base de datos es exactamente 5 puntos", $finalDbBalance === 5);
+assertStage3Test("Existen exactamente 2 transacciones registradas (+10 y -5)",
+    count($testTxs) === 2 &&
+    (int) $testTxs[0]['points'] === 10 && (int) $testTxs[0]['balance_after'] === 10 &&
+    (int) $testTxs[1]['points'] === -5 && (int) $testTxs[1]['balance_after'] === 5
+);
+
 // 7. Catálogo y Canje de Premios (Rewards)
 echo PHP_EOL . "--- 7. Catálogo de Premios y Canje Atómico ---" . PHP_EOL;
 
@@ -344,10 +379,33 @@ assertStage3Test("Reintento de canje con mismo operation_id es detectado como id
     $resRedeemRepeat['idempotent'] && $resRedeemRepeat['balance'] === 10
 );
 
-// 7.6 Movimiento en ledger generado por el canje
+// 7.6 Movimiento en ledger generado por el canje y validación de entrega / notas
 $redeemTx = $pdo->query("SELECT * FROM `points_transactions` WHERE `operation_id` = 'pts_{$opRedeemSuccess}'")->fetch(PDO::FETCH_ASSOC);
 assertStage3Test("Canje registró movimiento inmutable 'reward_redeem' con -50 puntos en ledger",
     $redeemTx && (int) $redeemTx['points'] === -50 && (int) $redeemTx['balance_after'] === 10
+);
+assertStage3Test("Motivo de transacción en ledger es limpio y seguro para vista pública",
+    $redeemTx && $redeemTx['reason'] === "Riscatto premio: Caffè Omaggio"
+);
+
+$redeemRow = $pdo->query("SELECT * FROM `reward_redemptions` WHERE `operation_id` = '{$opRedeemSuccess}'")->fetch(PDO::FETCH_ASSOC);
+assertStage3Test("Registro de canje guardó delivered_at y actor_user_id",
+    $redeemRow && !empty($redeemRow['delivered_at']) && (int) $redeemRow['actor_user_id'] === $staffAId
+);
+
+// 7.7 Canje con nota interna (nota aislada en reward_redemptions sin contaminar ledger público)
+$pointsService->adjustPoints($bizA['id'], $accVantaggiId, 50, 'bonus', 'Ricarica', 'op_bonus_note_' . time(), $staffAId);
+$opRedeemNote = 'op_red_note_' . time();
+$resRedeemNote = $rewardService->redeemReward($bizA['id'], $accVantaggiId, $reward1['id'], $opRedeemNote, $staffAId, 'Consegnato con confezione regalo');
+
+$redeemNoteRow = $pdo->query("SELECT * FROM `reward_redemptions` WHERE `operation_id` = '{$opRedeemNote}'")->fetch(PDO::FETCH_ASSOC);
+$redeemNoteTx = $pdo->query("SELECT * FROM `points_transactions` WHERE `operation_id` = 'pts_{$opRedeemNote}'")->fetch(PDO::FETCH_ASSOC);
+
+assertStage3Test("Nota interna guardada exclusivamente en reward_redemptions.notes",
+    $redeemNoteRow && $redeemNoteRow['notes'] === 'Consegnato con confezione regalo'
+);
+assertStage3Test("Ledger público NO contiene la nota interna en points_transactions.reason",
+    $redeemNoteTx && $redeemNoteTx['reason'] === "Riscatto premio: Caffè Omaggio"
 );
 
 // 8. Ofertas Estándar y Ofertas VIP (Monouso y Reutilizables)
@@ -357,8 +415,9 @@ echo PHP_EOL . "--- 8. Ofertas Estándar, Ofertas VIP y Canjes Monouso ---" . PH
 $offerStd = $offerService->createOffer($bizA['id'], [
     'title' => 'Buono Benvenuto 5 EUR',
     'description' => 'Sconto di 5 EUR sul primo acquisto',
-    'offer_type' => 'discount',
-    'required_capability' => 'offers',
+    'discount_type' => 'fixed',
+    'discount_value' => 5.0,
+    'target_audience' => 'vantaggi',
     'is_single_use' => true,
 ]);
 
@@ -366,13 +425,14 @@ $offerStd = $offerService->createOffer($bizA['id'], [
 $offerVip = $offerService->createOffer($bizA['id'], [
     'title' => 'Aperitivo VIP Riservato',
     'description' => 'Calice di prosecco di benvenuto',
-    'offer_type' => 'vip_exclusive',
-    'required_capability' => 'vip_offers',
+    'discount_type' => 'percentage',
+    'discount_value' => 10.0,
+    'target_audience' => 'vip',
     'is_single_use' => true,
 ]);
 
-assertStage3Test("Oferta Estándar '{$offerStd['title']}' creada", $offerStd['id'] > 0);
-assertStage3Test("Oferta VIP '{$offerVip['title']}' creada", $offerVip['id'] > 0);
+assertStage3Test("Oferta Estándar '{$offerStd['title']}' creada con beneficio '{$offerStd['formatted_benefit']}'", $offerStd['id'] > 0 && $offerStd['formatted_benefit'] === 'Sconto €5,00');
+assertStage3Test("Oferta VIP '{$offerVip['title']}' creada con beneficio '{$offerVip['formatted_benefit']}'", $offerVip['id'] > 0 && $offerVip['formatted_benefit'] === 'Sconto 10%');
 
 // 8.3 Canje de Oferta Estándar en cuenta Vantaggi
 $opOff1 = 'op_off_' . time() . '_1';
@@ -396,14 +456,152 @@ try {
 try {
     $offerService->redeemOffer($bizA['id'], $accVantaggiId, $offerVip['id'], 'op_vip_err_' . time(), $staffAId);
     assertStage3Test("Cuenta Vantaggi rechaza oferta VIP (vip_offers)", false);
-} catch (ForbiddenException $e) {
-    assertStage3Test("Cuenta Vantaggi rechaza oferta VIP (403 Forbidden)", true, $e->getMessage());
+} catch (ForbiddenException|InvalidArgumentException $e) {
+    assertStage3Test("Cuenta Vantaggi rechaza oferta VIP (Rechazo)", true, $e->getMessage());
 }
 
 // 8.7 Canje de Oferta VIP exitoso en cuenta VIP
 $opVipSucc = 'op_vip_' . time() . '_succ';
 $resVipRedeem = $offerService->redeemOffer($bizA['id'], $accVipId, $offerVip['id'], $opVipSucc, $staffAId);
 assertStage3Test("Canje de oferta VIP exitoso en cuenta VIP", !$resVipRedeem['idempotent']);
+
+// 8.8 Oferta Vantaggi+VIP (target_audience = 'vantaggi_vip')
+$offerAll = $offerService->createOffer($bizA['id'], [
+    'title' => 'Sconto Flash 15%',
+    'description' => 'Valido per Vantaggi e VIP',
+    'discount_type' => 'percentage',
+    'discount_value' => 15.0,
+    'target_audience' => 'vantaggi_vip',
+    'is_single_use' => false,
+]);
+assertStage3Test("Oferta Vantaggi+VIP creada con card_profile_id = NULL y target_audience = 'vantaggi_vip'",
+    $offerAll['id'] > 0 && $offerAll['card_profile_id'] === null && $offerAll['target_audience'] === 'vantaggi_vip'
+);
+
+// 8.9 Segmentación de Listado por Perfil
+$vantaggiProfileId = (int) $onboard2['loyalty_account']['card_profile_id'];
+$vipProfileId = (int) $accVip['card_profile_id'];
+$puntiProfileId = (int) $onboard1['loyalty_account']['card_profile_id'];
+
+$vantaggiOffers = $offerService->listOffers($bizA['id'], true, $vantaggiProfileId);
+$vantaggiOfferIds = array_column($vantaggiOffers, 'id');
+assertStage3Test("Solo Vantaggi: Vantaggi ve oferta Solo Vantaggi (#{$offerStd['id']}) y Vantaggi+VIP (#{$offerAll['id']}), pero NO Solo VIP (#{$offerVip['id']})",
+    in_array($offerStd['id'], $vantaggiOfferIds, true) &&
+    in_array($offerAll['id'], $vantaggiOfferIds, true) &&
+    !in_array($offerVip['id'], $vantaggiOfferIds, true)
+);
+
+$vipOffers = $offerService->listOffers($bizA['id'], true, $vipProfileId);
+$vipOfferIds = array_column($vipOffers, 'id');
+assertStage3Test("Solo VIP: VIP ve oferta Solo VIP (#{$offerVip['id']}) y Vantaggi+VIP (#{$offerAll['id']}), pero NO Solo Vantaggi (#{$offerStd['id']})",
+    in_array($offerVip['id'], $vipOfferIds, true) &&
+    in_array($offerAll['id'], $vipOfferIds, true) &&
+    !in_array($offerStd['id'], $vipOfferIds, true)
+);
+
+// 8.10 Punti: listOffers retorna array vacío y NULL jamás incluye Punti
+$puntiOffers = $offerService->listOffers($bizA['id'], true, $puntiProfileId);
+assertStage3Test("Punti: listOffers retorna array vacío (cero ofertas)", empty($puntiOffers));
+
+// 8.11 Punti: rechazo estricto al intentar canjear cualquier oferta
+try {
+    $offerService->redeemOffer($bizA['id'], $accPuntiId, $offerAll['id'], 'op_punti_err_' . time(), $staffAId);
+    assertStage3Test("Punti: rechazo al intentar canjear oferta (422 / InvalidArgumentException / 403 / ForbiddenException)", false);
+} catch (ForbiddenException|InvalidArgumentException $e) {
+    assertStage3Test("Punti: rechazo al intentar canjear oferta ({$e->getMessage()})", true, $e->getMessage());
+}
+
+// 8.12 Validación de target_audience inválido (422)
+try {
+    $offerService->createOffer($bizA['id'], [
+        'title' => 'Target Invalido',
+        'discount_type' => 'percentage',
+        'discount_value' => 10,
+        'target_audience' => 'target_inventato_xyz',
+    ]);
+    assertStage3Test("Target inválido rechazado con 422", false);
+} catch (InvalidArgumentException $e) {
+    assertStage3Test("Target inválido rechazado con 422", true, $e->getMessage());
+}
+
+// 8.13 Validación de porcentaje inválido (0, negativo, >100)
+$pctInvalidValues = [0, -5, 100.1];
+$pctAllRejected = true;
+foreach ($pctInvalidValues as $invVal) {
+    try {
+        $offerService->createOffer($bizA['id'], [
+            'title' => "Pct Invalido {$invVal}",
+            'discount_type' => 'percentage',
+            'discount_value' => $invVal,
+            'target_audience' => 'vantaggi',
+        ]);
+        $pctAllRejected = false;
+    } catch (InvalidArgumentException $e) {
+        // esperado
+    }
+}
+assertStage3Test("Porcentajes 0, negativo y >100 rechazados con 422", $pctAllRejected);
+
+// 8.14 Validación de importe fijo inválido (0, negativo)
+$fixedInvalidValues = [0, -10];
+$fixedAllRejected = true;
+foreach ($fixedInvalidValues as $invVal) {
+    try {
+        $offerService->createOffer($bizA['id'], [
+            'title' => "Fixed Invalido {$invVal}",
+            'discount_type' => 'fixed',
+            'discount_value' => $invVal,
+            'target_audience' => 'vantaggi',
+        ]);
+        $fixedAllRejected = false;
+    } catch (InvalidArgumentException $e) {
+        // esperado
+    }
+}
+assertStage3Test("Importes fijos 0 o negativo rechazados con 422", $fixedAllRejected);
+
+// 8.15 Exclusión de ofertas inactivas, futuras y vencidas en listado activo
+$offerInactive = $offerService->createOffer($bizA['id'], [
+    'title' => 'Offerta Inattiva Test',
+    'discount_type' => 'fixed',
+    'discount_value' => 5,
+    'target_audience' => 'vantaggi',
+    'status' => 'inactive',
+]);
+
+$offerFuture = $offerService->createOffer($bizA['id'], [
+    'title' => 'Offerta Futura Test',
+    'discount_type' => 'fixed',
+    'discount_value' => 5,
+    'target_audience' => 'vantaggi',
+    'start_date' => gmdate('Y-m-d H:i:s', time() + 86400),
+]);
+
+$offerExpired = $offerService->createOffer($bizA['id'], [
+    'title' => 'Offerta Scaduta Test',
+    'discount_type' => 'fixed',
+    'discount_value' => 5,
+    'target_audience' => 'vantaggi',
+    'end_date' => gmdate('Y-m-d H:i:s', time() - 86400),
+]);
+
+$activeList = $offerService->listOffers($bizA['id'], true, $vantaggiProfileId);
+$activeIds = array_column($activeList, 'id');
+
+assertStage3Test("Ofertas inactivas, futuras y vencidas excluidas del listado activo",
+    !in_array($offerInactive['id'], $activeIds, true) &&
+    !in_array($offerFuture['id'], $activeIds, true) &&
+    !in_array($offerExpired['id'], $activeIds, true)
+);
+
+// 8.16 Inclusión en listado administrativo completo ($onlyActive = false)
+$adminList = $offerService->listOffers($bizA['id'], false, $vantaggiProfileId);
+$adminIds = array_column($adminList, 'id');
+assertStage3Test("Listado administrativo (\$onlyActive = false) incluye ofertas inactivas, futuras y vencidas",
+    in_array($offerInactive['id'], $adminIds, true) &&
+    in_array($offerFuture['id'], $adminIds, true) &&
+    in_array($offerExpired['id'], $adminIds, true)
+);
 
 // 9. Aislamiento Multiempresa Estricto (Tenant Cross-Protection)
 echo PHP_EOL . "--- 9. Aislamiento Multiempresa Estricto ---" . PHP_EOL;
@@ -467,7 +665,7 @@ assertStage3Test("Vista anónima VIP: no muestra balance ni catálogo de puntos 
     !isset($viewVipAnon['loyalty_account']['balance']) && !isset($viewVipAnon['rewards'])
 );
 assertStage3Test("Vista anónima VIP: expone ofertas VIP exclusivas",
-    !empty($viewVipAnon['offers']) && $viewVipAnon['offers'][0]['offer_type'] === 'vip_exclusive'
+    !empty($viewVipAnon['offers']) && in_array('vip_exclusive', array_column($viewVipAnon['offers'], 'offer_type'), true)
 );
 
 // 10.4 Vista Staff del mismo comercio: Ficha operativa con acciones permitidas

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi, loyaltyApi } from '../../api/services';
@@ -42,12 +42,17 @@ export const CustomersPage: React.FC = () => {
     token: string;
     customerName: string;
     profileName: string;
+    customerEmail?: string;
+    businessName?: string;
   } | null>(null);
 
   const canEdit = hasPermission('customer.edit');
 
   const fetchCustomers = async (p = 1, term = search) => {
-    if (!activeBusiness) return;
+    if (!activeBusiness) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setError(null);
     try {
@@ -85,7 +90,7 @@ export const CustomersPage: React.FC = () => {
 
   const handleOnboardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeBusiness) return;
+    if (!activeBusiness || onboardSubmitting) return;
     if (!privacyAccepted) {
       setOnboardError('Il consenso alla privacy è obbligatorio per completare la registrazione.');
       return;
@@ -110,6 +115,7 @@ export const CustomersPage: React.FC = () => {
       setFirstName('');
       setLastName('');
       setPhone('');
+      const customerEmailVal = email.trim() || undefined;
       setEmail('');
       setPrivacyAccepted(false);
       setMarketingAccepted(false);
@@ -120,6 +126,8 @@ export const CustomersPage: React.FC = () => {
         token: res.token,
         customerName: `${res.customer.first_name} ${res.customer.last_name}`,
         profileName: profName,
+        customerEmail: customerEmailVal,
+        businessName: activeBusiness.name,
       });
 
       await fetchCustomers(1);
@@ -228,9 +236,23 @@ export const CustomersPage: React.FC = () => {
       )}
 
       {/* Modale Nuovo Cliente */}
-      <Modal isOpen={isOnboardOpen} title="Registrazione Nuovo Cliente" onClose={() => setIsOnboardOpen(false)}>
+      <Modal isOpen={isOnboardOpen} title="Registrazione Nuovo Cliente (Presenziale)" onClose={() => setIsOnboardOpen(false)}>
         <form onSubmit={handleOnboardSubmit}>
           {onboardError && <Alert type="error" message={onboardError} />}
+
+          <div
+            style={{
+              padding: '0.75rem 1rem',
+              background: '#f1f5f9',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '0.85rem',
+              color: 'var(--color-text-secondary)',
+              marginBottom: '1rem',
+              borderLeft: '4px solid var(--color-primary)',
+            }}
+          >
+            📋 <strong>Registrazione al punto vendita</strong>: L'operatore registra le informazioni e le decisioni di consenso espresse presenzialmente dal cliente.
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             <Input label="Nome *" required value={firstName} onChange={(e) => setFirstName(e.target.value)} />
@@ -258,7 +280,7 @@ export const CustomersPage: React.FC = () => {
                 onChange={(e) => setPrivacyAccepted(e.target.checked)}
               />
               <span style={{ fontSize: '0.85rem' }}>
-                <strong>Informativa Privacy *</strong>: Il cliente ha preso visione e accettato l'informativa sul trattamento dei dati personali.
+                <strong>Informativa Privacy (obbligatorio) *</strong>: Il cliente ha preso visione e accettato l'informativa sul trattamento dei dati personali per l'erogazione del servizio.
               </span>
             </label>
 
@@ -269,7 +291,7 @@ export const CustomersPage: React.FC = () => {
                 onChange={(e) => setMarketingAccepted(e.target.checked)}
               />
               <span style={{ fontSize: '0.85rem' }}>
-                <strong>Comunicazioni Commerciali (opzionale)</strong>: Il cliente acconsente a ricevere promozioni e offerte speciali.
+                <strong>Comunicazioni Commerciali (opzionale)</strong>: Il cliente acconsente a ricevere promozioni e offerte speciali. <em>Facoltativo, non condiziona l'iscrizione al programma.</em>
               </span>
             </label>
           </div>
@@ -293,6 +315,8 @@ export const CustomersPage: React.FC = () => {
           token={createdCredential.token}
           customerName={createdCredential.customerName}
           profileName={createdCredential.profileName}
+          customerEmail={createdCredential.customerEmail}
+          businessName={createdCredential.businessName}
         />
       )}
     </div>

@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace App\Core\Http;
 
-final class Request
-{
+final class Request {
+    public $body = '';
+    private array $routeParams = [];
+    public function setRouteParam(string $key, $value): void { $this->routeParams[$key] = $value; }
+    public function getRouteParam(string $key) { return $this->routeParams[$key] ?? null; }
+    public function getJson(): array { return $this->getJsonBody(); }
+    public function getAttribute(string $key) { return $this->attributes[$key] ?? null; }
+    public function setAttribute(string $key, $value): void { $this->attributes[$key] = $value; }
+
     private string $method;
     private string $path;
     private array $headers;

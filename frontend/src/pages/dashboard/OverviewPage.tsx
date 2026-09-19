@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
@@ -11,7 +11,11 @@ export const OverviewPage: React.FC = () => {
         <div>
           <h1 className="page-title">Panoramica Commercio</h1>
           <p className="page-subtitle">
-            Benvenuto nel pannello di gestione di <strong>{activeBusiness?.name}</strong>. Il tuo ruolo è <strong>{role}</strong>.
+            {activeBusiness ? (
+              <>Benvenuto nel pannello di gestione di <strong>{activeBusiness.name}</strong>. Il tuo ruolo è <strong>{role}</strong>.</>
+            ) : (
+              <>Seleziona un commercio per visualizzare la panoramica operativa.</>
+            )}
           </p>
         </div>
         <div>

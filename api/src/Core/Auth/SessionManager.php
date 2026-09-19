@@ -58,17 +58,18 @@ final class SessionManager
      *
      * @return array{id: string, token_hash: string, user_id: int, csrf_token: string, expires_at: string}
      */
-    public function createSession(int $userId, ?string $ipAddress = null, ?string $userAgent = null): array
+    public function createSession(int $userId, ?string $ipAddress = null, ?string $userAgent = null, string $state = 'active'): array
     {
         $plainToken = bin2hex(random_bytes(32)); // 64 caracteres hex (token original para cookie)
         $tokenHash = self::hashToken($plainToken); // Hash SHA-256 almacenado en DB
         $csrfToken = Csrf::generateToken();       // 64 caracteres hex
 
         $stmt = $this->pdo->prepare("
-            INSERT INTO `sessions` (`id`, `user_id`, `csrf_token`, `ip_address`, `user_agent`, `last_activity_at`, `created_at`, `expires_at`)
+            INSERT INTO `sessions` (`id`, `user_id`, `state`, `csrf_token`, `ip_address`, `user_agent`, `last_activity_at`, `created_at`, `expires_at`)
             VALUES (
                 :id,
                 :user_id,
+                :state,
                 :csrf_token,
                 :ip_address,
                 :user_agent,
@@ -81,6 +82,7 @@ final class SessionManager
         $stmt->execute([
             'id' => $tokenHash,
             'user_id' => $userId,
+            'state' => $state,
             'csrf_token' => $csrfToken,
             'ip_address' => $ipAddress,
             'user_agent' => $userAgent,
@@ -155,8 +157,8 @@ final class SessionManager
         $tokenHash = self::hashToken($token);
 
         $stmt = $this->pdo->prepare("
-            SELECT s.`id` AS token_hash, s.`user_id`, s.`csrf_token`, s.`last_activity_at`, s.`created_at`, s.`expires_at`,
-                   u.`id` AS u_id, u.`email`, u.`name`, u.`status`, u.`is_super_admin`
+            SELECT s.`id` AS token_hash, s.`user_id`, s.`state`, s.`csrf_token`, s.`last_activity_at`, s.`created_at`, s.`expires_at`,
+                   u.`id` AS u_id, u.`email`, u.`name`, u.`status`, u.`is_super_admin`, u.`totp_enabled`
             FROM `sessions` s
             INNER JOIN `users` u ON s.`user_id` = u.`id`
             WHERE s.`id` = :id
@@ -206,12 +208,14 @@ final class SessionManager
             'token_hash' => $tokenHash,
             'user_id' => (int) $row['user_id'],
             'csrf_token' => $row['csrf_token'],
+            'state' => $row['state'],
             'user' => [
                 'id' => (int) $row['u_id'],
-                'email' => $row['email'],
-                'name' => $row['name'],
-                'status' => $row['status'],
+                'email' => (string) $row['email'],
+                'name' => (string) $row['name'],
+                'status' => (string) $row['status'],
                 'is_super_admin' => (bool) $row['is_super_admin'],
+                'totp_enabled' => (bool) ($row['totp_enabled'] ?? false),
             ],
         ];
     }

@@ -1,5 +1,6 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import QRCode from 'qrcode';
 import { publicCardApi, pointsApi, rewardsApi, offersApi } from '../../api/services';
 import type { PublicCardView, Reward, Offer } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -9,6 +10,7 @@ import { Modal } from '../../components/common/Modal';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
 import { ApiError, generateOperationId } from '../../api/client';
+import { formatOfferBenefit } from '../../utils/formatters';
 
 export const PublicCardPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -19,15 +21,39 @@ export const PublicCardPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | undefined>(undefined);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [qrSvg, setQrSvg] = useState<string | null>(null);
+
+  // Modali di consultazione (Public + Staff)
+  const [isOffersModalOpen, setIsOffersModalOpen] = useState(false);
+  const [isRewardsModalOpen, setIsRewardsModalOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (token) {
+      const fullUrl = `${window.location.origin}/c/${token}`;
+      QRCode.toString(fullUrl, {
+        type: 'svg',
+        margin: 1,
+        width: 220,
+      })
+        .then(setQrSvg)
+        .catch(() => setQrSvg(null));
+    }
+  }, [token]);
 
   // Modali Operative Staff
   const [isPointsModalOpen, setIsPointsModalOpen] = useState(false);
   const [pointsDelta, setPointsDelta] = useState<number>(10);
   const [pointsReason, setPointsReason] = useState<string>('Acquisto in cassa');
   const [calcAmount, setCalcAmount] = useState<string>('');
+  const [pointsModalError, setPointsModalError] = useState<string | null>(null);
 
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
+  const [rewardModalError, setRewardModalError] = useState<string | null>(null);
+
   const [selectedOffer, setSelectedOffer] = useState<Offer | null>(null);
+  const [offerModalError, setOfferModalError] = useState<string | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchCard = async () => {
@@ -70,24 +96,34 @@ export const PublicCardPage: React.FC = () => {
   const handleAdjustPoints = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+
+    const pts = parseInt(String(pointsDelta), 10);
+    if (isNaN(pts)) {
+      setPointsModalError('Il campo points è obbligatorio e deve essere un numero intero.');
+      return;
+    }
+
     setIsSubmitting(true);
+    setPointsModalError(null);
     setFeedback(null);
     try {
       const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
-        points_delta: Number(pointsDelta),
-        reason: pointsReason,
+        points: pts,
+        reason: pointsReason.trim() || 'Aggiustamento manuale',
         operation_id: generateOperationId(),
       });
+      const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
       setFeedback({
         type: 'success',
         message: res.idempotent
           ? 'Operazione già registrata in precedenza.'
-          : `Punti aggiornati con successo! Nuovo saldo: ${res.new_balance} punti.`,
+          : `Punti aggiornati con successo! Nuovo saldo: ${newBal} punti.`,
       });
       setIsPointsModalOpen(false);
+      setPointsModalError(null);
       await fetchCard();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'aggiornamento dei punti.' });
+      setPointsModalError(err.message || 'Errore durante l\'aggiornamento dei punti.');
     } finally {
       setIsSubmitting(false);
     }
@@ -97,6 +133,7 @@ export const PublicCardPage: React.FC = () => {
   const handleRedeemReward = async () => {
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id || !selectedReward) return;
     setIsSubmitting(true);
+    setRewardModalError(null);
     setFeedback(null);
     try {
       const res = await rewardsApi.redeem(
@@ -110,9 +147,11 @@ export const PublicCardPage: React.FC = () => {
         message: `Premio "${selectedReward.name}" riscattato con successo! Nuovo saldo: ${res.new_balance} punti.`,
       });
       setSelectedReward(null);
+      setIsRewardsModalOpen(false);
+      setRewardModalError(null);
       await fetchCard();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante il riscatto del premio.' });
+      setRewardModalError(err.message || 'Errore durante il riscatto del premio.');
     } finally {
       setIsSubmitting(false);
     }
@@ -122,6 +161,7 @@ export const PublicCardPage: React.FC = () => {
   const handleRedeemOffer = async () => {
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id || !selectedOffer) return;
     setIsSubmitting(true);
+    setOfferModalError(null);
     setFeedback(null);
     try {
       await offersApi.redeem(
@@ -135,9 +175,11 @@ export const PublicCardPage: React.FC = () => {
         message: `Offerta "${selectedOffer.title}" applicata con successo!`,
       });
       setSelectedOffer(null);
+      setIsOffersModalOpen(false);
+      setOfferModalError(null);
       await fetchCard();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'applicazione dell\'offerta.' });
+      setOfferModalError(err.message || 'Errore durante l\'applicazione dell\'offerta.');
     } finally {
       setIsSubmitting(false);
     }
@@ -153,16 +195,47 @@ export const PublicCardPage: React.FC = () => {
 
   // Errori o stati non disponibili
   if (error || !cardData) {
+    const isNotFound = errorStatus === 404 || error?.toLowerCase().includes('non trovata') || error?.toLowerCase().includes('non valida');
+    const isRevoked = error?.toLowerCase().includes('revoc') || error?.toLowerCase().includes('sostitu');
     return (
       <div className="public-card-container">
         <div className="public-card-box" style={{ padding: '2rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-          <Alert type="error" status={errorStatus} message={error || 'Carta non disponibile o non trovata.'} />
-          <div style={{ marginTop: '1.5rem' }}>
-            <Link to="/login" className="btn btn-secondary">
-              Vai alla pagina di accesso
-            </Link>
-          </div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>{isRevoked ? '🔄' : isNotFound ? '🔍' : '⚠️'}</div>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+            {isRevoked
+              ? 'Carta sostituita'
+              : isNotFound
+              ? 'Carta non trovata'
+              : 'Carta non disponibile'}
+          </h2>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.95rem', lineHeight: 1.5, marginBottom: '1.5rem' }}>
+            {isRevoked
+              ? 'Questa carta è stata sostituita o revocata. Rivolgiti allo sportello del punto vendita per ottenere il nuovo link.'
+              : isNotFound
+              ? 'Il codice QR non corrisponde a nessuna carta attiva. Verifica di aver scansionato il QR corretto.'
+              : (error || 'Impossibile caricare le informazioni di questa carta. Riprova più tardi.')}
+          </p>
+          <a href="/" className="btn btn-secondary" style={{ display: 'inline-block' }}>
+            ← Torna alla home
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // Stato: Sostituita o Revocata
+  if (cardData.state === 'replaced' || cardData.state === 'revoked') {
+    return (
+      <div className="public-card-container">
+        <div className="public-card-box" style={{ padding: '2rem', textAlign: 'center' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔄</div>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.5rem' }}>Carta sostituita</h2>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.95rem', lineHeight: 1.5, marginBottom: '1.5rem' }}>
+            {cardData.message || 'Questa carta è stata sostituita con una nuova credenziale. Contatta il negozio per il nuovo link.'}
+          </p>
+          <a href="/" className="btn btn-secondary" style={{ display: 'inline-block' }}>
+            ← Torna alla home
+          </a>
         </div>
       </div>
     );
@@ -218,6 +291,13 @@ export const PublicCardPage: React.FC = () => {
   const headerClass =
     profileCode === 'vip' ? 'header-vip' : profileCode === 'vantaggi' ? 'header-vantaggi' : 'header-punti';
 
+  const offersCount = cardData.offers?.length || 0;
+  const rewardsCount = cardData.rewards?.length || 0;
+  const transactionsCount = cardData.recent_transactions?.length || 0;
+  const hasPointsCapability = cardData.loyalty_account?.balance !== undefined;
+  const hasOffersCapability = profileCode !== 'punti';
+  const hasRewardsCapability = hasPointsCapability;
+
   return (
     <div className="public-card-container">
       <div className="public-card-box">
@@ -268,6 +348,51 @@ export const PublicCardPage: React.FC = () => {
             />
           )}
 
+          {/* Codice QR della Carta Digitale (Mobile-first, compatto e centrato) */}
+          <div
+            data-testid="card-qr-section"
+            style={{
+              textAlign: 'center',
+              marginBottom: '1.25rem',
+              background: '#ffffff',
+              border: '2px solid var(--color-border)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '1.25rem 1rem',
+              boxShadow: 'var(--shadow-sm)',
+            }}
+          >
+            <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 700, letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
+              Codice Carta Digitale
+            </div>
+            <div
+              style={{
+                maxWidth: '190px',
+                width: '100%',
+                margin: '0 auto',
+                aspectRatio: '1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {qrSvg ? (
+                <img
+                  src={`data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}`}
+                  alt="QR Code Carta Digitale"
+                  data-testid="card-qr-image"
+                  style={{ width: '100%', height: 'auto', display: 'block', maxWidth: '180px' }}
+                />
+              ) : (
+                <div style={{ padding: '2rem 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                  Caricamento QR...
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', margin: '0.75rem 0 0 0', lineHeight: 1.4 }}>
+              Mostra questo codice in cassa per accumulare punti o utilizzare i tuoi vantaggi.
+            </p>
+          </div>
+
           {/* Dati Cliente (Visibili SOLO in modalità Staff) */}
           {isStaff && cardData.customer && (
             <div
@@ -295,16 +420,16 @@ export const PublicCardPage: React.FC = () => {
           )}
 
           {/* Saldo Punti (Mostrato solo se la capacità 'points' è presente/balance è valorizzato) */}
-          {cardData.loyalty_account?.balance !== undefined && (
+          {hasPointsCapability && (
             <div className="balance-display">
-              <div className="balance-value">{cardData.loyalty_account.balance}</div>
+              <div className="balance-value">{cardData.loyalty_account?.balance ?? 0}</div>
               <div className="balance-label">Punti Accumulati</div>
             </div>
           )}
 
           {/* Progresso Verso Prossimo Premio */}
           {cardData.next_reward && (
-            <div style={{ marginBottom: '1.5rem', background: '#f8fafc', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ marginBottom: '1.25rem', background: '#f8fafc', padding: '0.85rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600 }}>
                 <span>Prossimo premio: {cardData.next_reward.name}</span>
                 <span>{cardData.next_reward.progress_percent}%</span>
@@ -318,28 +443,24 @@ export const PublicCardPage: React.FC = () => {
             </div>
           )}
 
-          {/* Azioni Operative del Personale (Staff Actions) */}
+          {/* Azioni Operative del Personale (Staff Quick Actions) */}
           {isStaff && cardData.actions && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.25rem' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
                 Azioni Rapide di Cassa
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem' }}>
                 {cardData.actions.can_adjust_points && (
-                  <Button variant="primary" size="sm" onClick={() => setIsPointsModalOpen(true)}>
+                  <Button variant="primary" size="md" className="btn-touch" onClick={() => setIsPointsModalOpen(true)}>
                     ➕ Gestisci Punti
                   </Button>
                 )}
-                {cardData.actions.can_redeem_rewards && (
+                {cardData.actions.can_redeem_rewards && rewardsCount > 0 && (
                   <Button
                     variant="secondary"
-                    size="sm"
-                    disabled={!cardData.rewards || cardData.rewards.length === 0}
-                    onClick={() => {
-                      if (cardData.rewards && cardData.rewards.length > 0) {
-                        setSelectedReward(cardData.rewards[0]);
-                      }
-                    }}
+                    size="md"
+                    className="btn-touch"
+                    onClick={() => setIsRewardsModalOpen(true)}
                   >
                     🎁 Riscatta Premio
                   </Button>
@@ -348,113 +469,55 @@ export const PublicCardPage: React.FC = () => {
             </div>
           )}
 
-          {/* Catalogo Premi Disponibili */}
-          {cardData.rewards && cardData.rewards.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.75rem' }}>Premi Disponibili</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {cardData.rewards.map((r) => {
-                  const canAfford =
-                    cardData.loyalty_account?.balance !== undefined &&
-                    cardData.loyalty_account.balance >= r.points_cost;
+          {/* Bottoni Tattili Verticali (Mobile-First Touch Buttons) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
+            {/* 1. Offerte e Promozioni */}
+            {hasOffersCapability && (
+              <Button
+                variant={offersCount > 0 ? 'primary' : 'outline'}
+                className="btn-touch"
+                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                disabled={offersCount === 0}
+                onClick={() => setIsOffersModalOpen(true)}
+              >
+                <span>🎟️ {offersCount > 0 ? `Vedi offerte e promozioni (${offersCount})` : 'Nessuna offerta disponibile'}</span>
+                {offersCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+              </Button>
+            )}
 
-                  return (
-                    <div
-                      key={r.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '0.75rem',
-                        border: '1px solid var(--color-border)',
-                        borderRadius: 'var(--radius-md)',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{r.name}</div>
-                        {r.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{r.description}</div>}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <span className="badge badge-primary">{r.points_cost} pt</span>
-                        {isStaff && cardData.actions?.can_redeem_rewards && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={!canAfford}
-                            onClick={() => setSelectedReward(r)}
-                          >
-                            Riscatta
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            {/* 2. Premi Disponibili */}
+            {hasRewardsCapability && (
+              <Button
+                variant={rewardsCount > 0 ? 'secondary' : 'outline'}
+                className="btn-touch"
+                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                disabled={rewardsCount === 0}
+                onClick={() => setIsRewardsModalOpen(true)}
+              >
+                <span>🎁 {rewardsCount > 0 ? `Vedi premi (${rewardsCount})` : 'Nessun premio disponibile'}</span>
+                {rewardsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+              </Button>
+            )}
 
-          {/* Catalogo Offerte / Vantaggi Esclusivi */}
-          {cardData.offers && cardData.offers.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-                {profileCode === 'vip' ? 'Vantaggi e Offerte Esclusive VIP' : 'Offerte e Promozioni'}
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {cardData.offers.map((o) => (
-                  <div
-                    key={o.id}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '0.75rem',
-                      border: '1px solid var(--color-border)',
-                      borderRadius: 'var(--radius-md)',
-                      background: o.is_vip ? 'var(--color-vip-bg)' : '#ffffff',
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span>{o.title}</span>
-                        {o.is_vip && <span className="badge badge-vip">VIP</span>}
-                      </div>
-                      {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
-                    </div>
-                    {isStaff && cardData.actions?.can_redeem_offers && (
-                      <Button variant="outline" size="sm" onClick={() => setSelectedOffer(o)}>
-                        Applica
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            {/* 3. Storico Punti */}
+            {hasPointsCapability && (
+              <Button
+                variant="outline"
+                className="btn-touch"
+                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                disabled={transactionsCount === 0}
+                onClick={() => setIsHistoryModalOpen(true)}
+              >
+                <span>📜 {transactionsCount > 0 ? `Storico punti` : 'Nessun movimento'}</span>
+                {transactionsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+              </Button>
+            )}
+          </div>
 
-          {/* Storico Operativo Recente (Solo Staff) */}
-          {isStaff && cardData.recent_transactions && cardData.recent_transactions.length > 0 && (
-            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
-              <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-                Ultimi Movimenti Punti
-              </h4>
-              <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                {cardData.recent_transactions.map((tx) => (
-                  <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{tx.reason || tx.type}</span>
-                    <strong style={{ color: tx.points_delta >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                      {tx.points_delta >= 0 ? `+${tx.points_delta}` : tx.points_delta} pt
-                    </strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Accesso Commerciante per utenti anonimi */}
+          {/* Accesso Commerciante per visitatori non staff */}
           {!isStaff && (
             <div style={{ textAlign: 'center', marginTop: '1.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
-              <Link to={`/login?return_to=/c/${token}`} className="btn btn-outline btn-sm">
+              <Link to={`/login?return_to=/c/${token}`} className="btn btn-outline btn-touch" style={{ width: '100%', maxWidth: '320px', margin: '0 auto' }}>
                 🔒 Accesso Commerciante
               </Link>
             </div>
@@ -462,9 +525,247 @@ export const PublicCardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Modale Accredito Punti */}
-      <Modal isOpen={isPointsModalOpen} title="Gestione Punti" onClose={() => setIsPointsModalOpen(false)}>
+      {/* ========================================================= */}
+      {/* Modale 1: Offerte e Promozioni                            */}
+      {/* ========================================================= */}
+      <Modal
+        isOpen={isOffersModalOpen}
+        title={profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi & VIP'}
+        onClose={() => setIsOffersModalOpen(false)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>
+          {cardData.offers && cardData.offers.length > 0 ? (
+            cardData.offers.map((o) => (
+              <div
+                key={o.id}
+                style={{
+                  padding: '0.85rem',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)',
+                  background: o.is_vip ? 'var(--color-vip-light-bg)' : '#ffffff',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '1rem' }}>{o.title}</div>
+                    {o.description && (
+                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
+                        {o.description}
+                      </div>
+                    )}
+                  </div>
+                  <span className="badge badge-primary" style={{ whiteSpace: 'nowrap' }}>
+                    {formatOfferBenefit(o.discount_type, o.discount_value)}
+                  </span>
+                </div>
+
+                <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
+                  {o.is_vip && <span className="badge badge-vip">Esclusivo VIP</span>}
+                  <span className="badge badge-secondary" style={{ fontSize: '0.75rem' }}>
+                    {o.is_single_use ? 'Monouso' : 'Utilizzo multiplo'}
+                  </span>
+                  {o.end_date && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      Valida fino al {new Date(o.end_date).toLocaleDateString('it-IT')}
+                    </span>
+                  )}
+                </div>
+
+                {isStaff && cardData.actions?.can_redeem_offers && (
+                  <div style={{ marginTop: '0.75rem', textAlign: 'right' }}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedOffer(o);
+                      }}
+                    >
+                      Applica Offerta
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+              Nessuna offerta Vantaggi o VIP disponibile.
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <Button variant="secondary" onClick={() => setIsOffersModalOpen(false)}>
+            Chiudi
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ========================================================= */}
+      {/* Modale 2: Catalogo Premi                                  */}
+      {/* ========================================================= */}
+      <Modal
+        isOpen={isRewardsModalOpen}
+        title="Premi riscattabili con punti"
+        onClose={() => setIsRewardsModalOpen(false)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>
+          {cardData.rewards && cardData.rewards.length > 0 ? (
+            cardData.rewards.map((r) => {
+              const currentBalance = cardData.loyalty_account?.balance ?? 0;
+              const canAfford = currentBalance >= r.points_cost;
+              const missingPoints = r.points_cost - currentBalance;
+
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    padding: '0.85rem',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    background: '#ffffff',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '1rem' }}>{r.name}</div>
+                      {r.description && (
+                        <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
+                          {r.description}
+                        </div>
+                      )}
+                    </div>
+                    <span className="badge badge-primary" style={{ whiteSpace: 'nowrap' }}>
+                      {r.points_cost} pt
+                    </span>
+                  </div>
+
+                  <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      {canAfford ? (
+                        <span className="badge badge-success" style={{ fontSize: '0.75rem' }}>
+                          ✓ Punti sufficienti
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                          Mancano {missingPoints} pt
+                        </span>
+                      )}
+                    </div>
+                    {isStaff && cardData.actions?.can_redeem_rewards && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={!canAfford}
+                        onClick={() => {
+                          setSelectedReward(r);
+                        }}
+                      >
+                        Riscatta Premio
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+              Nessun premio con punti disponibile.
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <Button variant="secondary" onClick={() => setIsRewardsModalOpen(false)}>
+            Chiudi
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ========================================================= */}
+      {/* Modale 3: Storico Movimenti Punti (Zero PII)               */}
+      {/* ========================================================= */}
+      <Modal
+        isOpen={isHistoryModalOpen}
+        title="Storico Movimenti Punti"
+        onClose={() => setIsHistoryModalOpen(false)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '65vh', overflowY: 'auto' }}>
+          {cardData.recent_transactions && cardData.recent_transactions.length > 0 ? (
+            cardData.recent_transactions.map((tx) => {
+              const isPositive = tx.points_delta >= 0;
+              const formattedDate = tx.created_at
+                ? new Date(tx.created_at).toLocaleDateString('it-IT', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : '';
+
+              return (
+                <div
+                  key={tx.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '0.75rem',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    background: '#f8fafc',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{tx.reason || tx.type || 'Movimento'}</div>
+                    {formattedDate && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{formattedDate}</div>
+                    )}
+                  </div>
+                  <strong
+                    style={{
+                      fontSize: '1rem',
+                      color: isPositive ? 'var(--color-success)' : 'var(--color-danger)',
+                      whiteSpace: 'nowrap',
+                      marginLeft: '0.5rem',
+                    }}
+                  >
+                    {isPositive ? `+${tx.points_delta}` : tx.points_delta} pt
+                  </strong>
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-text-muted)' }}>
+              Nessun movimento recente registrato.
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <Button variant="secondary" onClick={() => setIsHistoryModalOpen(false)}>
+            Chiudi
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Modale Staff: Accredito Punti */}
+      <Modal
+        isOpen={isPointsModalOpen}
+        title="Gestione Punti"
+        onClose={() => {
+          setIsPointsModalOpen(false);
+          setPointsModalError(null);
+        }}
+      >
         <form onSubmit={handleAdjustPoints}>
+          {pointsModalError && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Alert
+                type="error"
+                message={pointsModalError}
+                onDismiss={() => setPointsModalError(null)}
+              />
+            </div>
+          )}
+
           <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.25rem' }}>Calcolatore Spesa Rapido</div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -497,7 +798,15 @@ export const PublicCardPage: React.FC = () => {
           />
 
           <div className="modal-actions">
-            <Button type="button" variant="secondary" onClick={() => setIsPointsModalOpen(false)} disabled={isSubmitting}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setIsPointsModalOpen(false);
+                setPointsModalError(null);
+              }}
+              disabled={isSubmitting}
+            >
               Annulla
             </Button>
             <Button type="submit" variant="primary" isLoading={isSubmitting}>
@@ -507,10 +816,26 @@ export const PublicCardPage: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Modale Riscatto Premio */}
-      <Modal isOpen={Boolean(selectedReward)} title="Conferma Riscatto Premio" onClose={() => setSelectedReward(null)}>
+      {/* Modale Staff: Conferma Riscatto Premio */}
+      <Modal
+        isOpen={Boolean(selectedReward)}
+        title="Conferma Riscatto Premio"
+        onClose={() => {
+          setSelectedReward(null);
+          setRewardModalError(null);
+        }}
+      >
         {selectedReward && (
           <div>
+            {rewardModalError && (
+              <div style={{ marginBottom: '1rem' }}>
+                <Alert
+                  type="error"
+                  message={rewardModalError}
+                  onDismiss={() => setRewardModalError(null)}
+                />
+              </div>
+            )}
             <p>Sei sicuro di voler riscattare il seguente premio per questo cliente?</p>
             <div style={{ margin: '1rem 0', padding: '0.75rem', background: '#f8fafc', borderRadius: 'var(--radius-md)' }}>
               <strong>{selectedReward.name}</strong>
@@ -519,7 +844,14 @@ export const PublicCardPage: React.FC = () => {
               </div>
             </div>
             <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setSelectedReward(null)} disabled={isSubmitting}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setSelectedReward(null);
+                  setRewardModalError(null);
+                }}
+                disabled={isSubmitting}
+              >
                 Annulla
               </Button>
               <Button variant="primary" onClick={handleRedeemReward} isLoading={isSubmitting}>
@@ -530,14 +862,35 @@ export const PublicCardPage: React.FC = () => {
         )}
       </Modal>
 
-      {/* Modale Applicazione Offerta */}
-      <Modal isOpen={Boolean(selectedOffer)} title="Conferma Applicazione Offerta" onClose={() => setSelectedOffer(null)}>
+      {/* Modale Staff: Conferma Applicazione Offerta */}
+      <Modal
+        isOpen={Boolean(selectedOffer)}
+        title="Conferma Applicazione Offerta"
+        onClose={() => {
+          setSelectedOffer(null);
+          setOfferModalError(null);
+        }}
+      >
         {selectedOffer && (
           <div>
+            {offerModalError && (
+              <div style={{ marginBottom: '1rem' }}>
+                <Alert
+                  type="error"
+                  message={offerModalError}
+                  onDismiss={() => setOfferModalError(null)}
+                />
+              </div>
+            )}
             <p>Confermi l'applicazione della seguente offerta al conto del cliente?</p>
             <div style={{ margin: '1rem 0', padding: '0.75rem', background: '#f8fafc', borderRadius: 'var(--radius-md)' }}>
-              <strong>{selectedOffer.title}</strong>
-              {selectedOffer.description && <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{selectedOffer.description}</div>}
+              <div style={{ fontWeight: 700 }}>{selectedOffer.title}</div>
+              <div style={{ marginTop: '0.25rem' }}>
+                <span className="badge badge-primary">
+                  {formatOfferBenefit(selectedOffer.discount_type, selectedOffer.discount_value)}
+                </span>
+              </div>
+              {selectedOffer.description && <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>{selectedOffer.description}</div>}
               {selectedOffer.is_single_use && (
                 <div style={{ fontSize: '0.75rem', color: 'var(--color-warning)', fontWeight: 600, marginTop: '0.25rem' }}>
                   ⚠️ Offerta monouso: non potrà essere riutilizzata da questo conto.
@@ -545,7 +898,14 @@ export const PublicCardPage: React.FC = () => {
               )}
             </div>
             <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setSelectedOffer(null)} disabled={isSubmitting}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setSelectedOffer(null);
+                  setOfferModalError(null);
+                }}
+                disabled={isSubmitting}
+              >
                 Annulla
               </Button>
               <Button variant="primary" onClick={handleRedeemOffer} isLoading={isSubmitting}>
