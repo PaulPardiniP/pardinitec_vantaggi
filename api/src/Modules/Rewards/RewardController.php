@@ -11,6 +11,7 @@ use App\Core\Security\Csrf;
 use App\Modules\Businesses\AuthorizationService;
 use App\Modules\Businesses\ForbiddenException;
 use App\Modules\Businesses\Permission;
+use App\Modules\Loyalty\CapabilityService;
 use InvalidArgumentException;
 use Throwable;
 
@@ -19,15 +20,18 @@ final class RewardController
     private RewardService $rewardService;
     private AuthService $authService;
     private AuthorizationService $authzService;
+    private CapabilityService $capabilityService;
 
     public function __construct(
         ?RewardService $rewardService = null,
         ?AuthService $authService = null,
-        ?AuthorizationService $authzService = null
+        ?AuthorizationService $authzService = null,
+        ?CapabilityService $capabilityService = null
     ) {
         $this->rewardService = $rewardService ?? new RewardService();
         $this->authService = $authService ?? new AuthService();
         $this->authzService = $authzService ?? new AuthorizationService();
+        $this->capabilityService = $capabilityService ?? new CapabilityService();
     }
 
     private function authenticate(Request $request): array
@@ -61,8 +65,13 @@ final class RewardController
         try {
             $this->authzService->requireMembership((int) $session['user_id'], $businessId);
 
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'rewards')) {
+                Response::error('Il catalogo premi non è attivo per questo commercio.', 403);
+            }
+
             $onlyActive = $request->getQuery('all') !== '1';
-            $rewards = $this->rewardService->listRewards($businessId, $onlyActive);
+            $profile = $request->getQuery('profile');
+            $rewards = $this->rewardService->listRewards($businessId, $onlyActive, null, $profile ? (string) $profile : null);
 
             Response::success('Catalogo premi recuperato.', [
                 'data' => $rewards,
@@ -84,6 +93,10 @@ final class RewardController
 
         try {
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::SETTINGS_MANAGE);
+
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'rewards')) {
+                Response::error('Il catalogo premi non è attivo per questo commercio.', 403);
+            }
 
             $body = $request->getJsonBody();
             $reward = $this->rewardService->createReward($businessId, $body);

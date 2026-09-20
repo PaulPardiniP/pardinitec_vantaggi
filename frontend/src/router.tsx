@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { LoginPage } from './pages/auth/LoginPage';
 import { HomePage } from './pages/public/HomePage';
 import { PublicCardPage } from './pages/public/PublicCardPage';
@@ -11,7 +11,8 @@ import { CustomersPage } from './pages/dashboard/CustomersPage';
 import { CustomerDetailPage } from './pages/dashboard/CustomerDetailPage';
 import { PointsPage } from './pages/dashboard/PointsPage';
 import { RewardsPage } from './pages/dashboard/RewardsPage';
-import { OffersPage } from './pages/dashboard/OffersPage';
+import { VantaggiPage } from './pages/dashboard/VantaggiPage';
+import { VipPage } from './pages/dashboard/VipPage';
 import { CardsPage } from './pages/dashboard/CardsPage';
 import { MembersPage } from './pages/dashboard/MembersPage';
 import { SettingsPage } from './pages/dashboard/SettingsPage';
@@ -60,7 +61,9 @@ export const router = createBrowserRouter([
       { path: 'loyalty-accounts/:accountId/preview', element: <LoyaltyAccountPreviewPage /> },
       { path: 'points', element: <PointsPage /> },
       { path: 'rewards', element: <RewardsPage /> },
-      { path: 'offers', element: <OffersPage /> },
+      { path: 'vantaggi', element: <VantaggiPage /> },
+      { path: 'vip', element: <VipPage /> },
+      { path: 'offers', element: <Navigate to="/dashboard/vantaggi" replace /> },
       { path: 'cards', element: <CardsPage /> },
       { path: 'members', element: <MembersPage /> },
       { path: 'settings', element: <SettingsPage /> },

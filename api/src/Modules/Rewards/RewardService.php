@@ -72,7 +72,10 @@ final class RewardService
 
         $description = isset($data['description']) ? trim((string) $data['description']) : null;
         $rawProfileId = $data['card_profile_id'] ?? $data['min_profile_id'] ?? null;
-        $minProfileId = $rawProfileId !== null && $rawProfileId !== '' ? (int) $rawProfileId : null;
+        if ($rawProfileId === null || $rawProfileId === '') {
+            $rawProfileId = $this->getProfileIdByCode('punti');
+        }
+        $minProfileId = $rawProfileId !== null ? (int) $rawProfileId : null;
         $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive'], true) ? (string) $data['status'] : 'active';
         $validFrom = !empty($data['valid_from']) ? (string) $data['valid_from'] : null;
         $validUntil = !empty($data['valid_until']) ? (string) $data['valid_until'] : null;
@@ -206,8 +209,12 @@ final class RewardService
      *
      * @return array<int, array<string, mixed>>
      */
-    public function listRewards(int $businessId, bool $onlyActive = true, ?int $cardProfileId = null): array
+    public function listRewards(int $businessId, bool $onlyActive = true, ?int $cardProfileId = null, ?string $profileCode = null): array
     {
+        if ($cardProfileId === null && $profileCode !== null) {
+            $cardProfileId = $this->getProfileIdByCode(strtolower(trim($profileCode)));
+        }
+
         $where = ['r.`business_id` = :business_id'];
         $params = ['business_id' => $businessId];
 
@@ -484,13 +491,14 @@ final class RewardService
 
         $cost = (int) $next['points_cost'];
         $remaining = max(0, $cost - $currentBalance);
-        $percent = $cost > 0 ? (int) min(100, round(($currentBalance / $cost) * 100)) : 100;
+        $percent = $cost > 0 ? (int) min(100, max(0, (int) floor(($currentBalance / $cost) * 100))) : 100;
 
         return [
             'id' => $next['id'],
             'name' => $next['name'],
             'points_cost' => $cost,
             'points_needed' => $remaining,
+            'progress_percent' => $percent,
             'progress_percentage' => $percent,
         ];
     }

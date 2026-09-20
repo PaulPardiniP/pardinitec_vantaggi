@@ -346,7 +346,8 @@ final class OfferService
         int $businessId,
         bool $onlyActive = true,
         ?int $cardProfileId = null,
-        ?string $capability = null
+        ?string $capability = null,
+        ?string $targetAudience = null
     ): array {
         $puntiId = $this->getProfileIdByCode('punti');
         $vantaggiId = $this->getProfileIdByCode('vantaggi');
@@ -364,6 +365,18 @@ final class OfferService
             $where[] = "o.`status` = 'active'";
             $where[] = "(o.`start_date` IS NULL OR o.`start_date` <= UTC_TIMESTAMP())";
             $where[] = "(o.`end_date` IS NULL OR o.`end_date` >= UTC_TIMESTAMP())";
+        }
+
+        if ($targetAudience !== null) {
+            if ($targetAudience === 'vantaggi') {
+                $where[] = "o.`card_profile_id` = :aud_vantaggi_id";
+                $params['aud_vantaggi_id'] = $vantaggiId;
+            } elseif ($targetAudience === 'vip') {
+                $where[] = "(o.`card_profile_id` = :aud_vip_id OR o.`offer_type` = 'vip_exclusive')";
+                $params['aud_vip_id'] = $vipId;
+            } elseif ($targetAudience === 'vantaggi_vip') {
+                $where[] = "(o.`card_profile_id` IS NULL AND o.`offer_type` != 'vip_exclusive')";
+            }
         }
 
         if ($cardProfileId !== null) {

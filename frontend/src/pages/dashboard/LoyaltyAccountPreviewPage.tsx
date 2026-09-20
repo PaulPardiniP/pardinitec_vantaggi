@@ -165,10 +165,10 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
             <div style={{ marginBottom: '1.25rem', background: '#f8fafc', padding: '0.85rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600 }}>
                 <span>Prossimo premio: {previewData.next_reward.name}</span>
-                <span>{previewData.next_reward.progress_percent}%</span>
+                <span>{(previewData.next_reward.progress_percent ?? previewData.next_reward.progress_percentage ?? 0)}%</span>
               </div>
               <div className="progress-bar-bg">
-                <div className="progress-bar-fill" style={{ width: `${Math.min(100, previewData.next_reward.progress_percent)}%` }} />
+                <div className="progress-bar-fill" style={{ width: `${Math.min(100, Math.max(0, (previewData.next_reward.progress_percent ?? previewData.next_reward.progress_percentage ?? 0)))}%` }} />
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', textAlign: 'right' }}>
                 Mancano {previewData.next_reward.points_needed} punti

@@ -25,7 +25,6 @@ export const RewardsPage: React.FC = () => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [pointsCost, setPointsCost] = useState<number>(50);
-  const [profileId, setProfileId] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Modale Elimina Premio
@@ -54,7 +53,7 @@ export const RewardsPage: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      const list = await rewardsApi.list(activeBusiness.id, true);
+      const list = await rewardsApi.list(activeBusiness.id, true, 'punti');
       setRewards(list);
       const profs = await loyaltyApi.listProfiles();
       setProfiles(profs);
@@ -74,7 +73,6 @@ export const RewardsPage: React.FC = () => {
     setName('');
     setDescription('');
     setPointsCost(50);
-    setProfileId('');
     setIsFormOpen(true);
   };
 
@@ -83,7 +81,6 @@ export const RewardsPage: React.FC = () => {
     setName(r.name);
     setDescription(r.description || '');
     setPointsCost(r.points_cost);
-    setProfileId(r.card_profile_id || '');
     setIsFormOpen(true);
   };
 
@@ -148,11 +145,12 @@ export const RewardsPage: React.FC = () => {
     setIsSubmitting(true);
     setFeedback(null);
     try {
+      const puntiProfile = profiles.find((p) => p.code === 'punti');
       const payload: Partial<Reward> = {
         name,
         description: description.trim() || null,
         points_cost: Number(pointsCost),
-        card_profile_id: profileId ? Number(profileId) : null,
+        card_profile_id: puntiProfile ? puntiProfile.id : null,
       };
 
       if (editingReward) {
@@ -263,14 +261,13 @@ export const RewardsPage: React.FC = () => {
                 <th>ID</th>
                 <th>Nome Premio</th>
                 <th>Punti Richiesti</th>
-                <th>Profilo Associato</th>
+                <th>Destinatari</th>
                 <th>Stato</th>
                 <th style={{ textAlign: 'right' }}>Azioni</th>
               </tr>
             </thead>
             <tbody>
               {rewards.map((r) => {
-                const profileObj = profiles.find((p) => p.id === r.card_profile_id);
                 return (
                   <tr key={r.id}>
                     <td>#{r.id}</td>
@@ -281,7 +278,9 @@ export const RewardsPage: React.FC = () => {
                     <td>
                       <span className="badge badge-primary">{r.points_cost} pt</span>
                     </td>
-                    <td>{profileObj ? profileObj.name : 'Tutti i profili con punti'}</td>
+                    <td>
+                      <span className="badge badge-secondary">Clienti Punti</span>
+                    </td>
                     <td>
                       <span className={`badge ${r.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
                         {r.status}
@@ -337,16 +336,6 @@ export const RewardsPage: React.FC = () => {
             required
             value={pointsCost}
             onChange={(e) => setPointsCost(parseInt(e.target.value, 10) || 1)}
-          />
-
-          <Select
-            label="Limita a un profilo specifico (opzionale)"
-            options={[
-              { label: 'Valido per tutti i profili con capacità punti', value: '' },
-              ...profiles.map((p) => ({ label: p.name, value: p.id })),
-            ]}
-            value={profileId}
-            onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : '')}
           />
 
           <div className="modal-actions">

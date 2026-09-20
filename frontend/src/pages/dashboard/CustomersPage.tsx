@@ -44,6 +44,7 @@ export const CustomersPage: React.FC = () => {
     profileName: string;
     customerEmail?: string;
     businessName?: string;
+    customerId?: number;
   } | null>(null);
 
   const canEdit = hasPermission('customer.edit');
@@ -128,6 +129,7 @@ export const CustomersPage: React.FC = () => {
         profileName: profName,
         customerEmail: customerEmailVal,
         businessName: activeBusiness.name,
+        customerId: res.customer.id,
       });
 
       await fetchCustomers(1);
@@ -317,6 +319,7 @@ export const CustomersPage: React.FC = () => {
           profileName={createdCredential.profileName}
           customerEmail={createdCredential.customerEmail}
           businessName={createdCredential.businessName}
+          customerId={createdCredential.customerId}
         />
       )}
     </div>

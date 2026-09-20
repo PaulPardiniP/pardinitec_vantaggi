@@ -1,4 +1,4 @@
-﻿export class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   errors?: Record<string, string[]>;
   retryAfter?: number;
@@ -128,9 +128,35 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestOpti
 
     const errors = data && typeof data === 'object' ? data.errors : undefined;
 
-    // Se la risposta è 403 per CSRF scaduto, ripulire la cache del token
+    // Se la risposta è 403 per CSRF scaduto, ripulire la cache e ritentare una volta
     if (response.status === 403 && typeof message === 'string' && message.toLowerCase().includes('csrf')) {
       cachedCsrfToken = null;
+      try {
+        const freshToken = await fetchCsrfToken();
+        if (freshToken) {
+          headers.set('X-CSRF-Token', freshToken);
+          const retryRes = await fetch(url, {
+            ...options,
+            method,
+            headers,
+            credentials: 'include',
+          });
+          if (retryRes.ok) {
+            const ct = retryRes.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              return (await retryRes.json()) as T;
+            }
+            return (await retryRes.text()) as unknown as T;
+          }
+        }
+      } catch {
+        // Fallback al messaggio di errore standard
+      }
+      throw new ApiError('Sessione scaduta. Accedi nuovamente.', 403, errors, retryAfter);
+    }
+
+    if (response.status === 401) {
+      throw new ApiError('Sessione scaduta. Accedi nuovamente.', 401, errors, retryAfter);
     }
 
     throw new ApiError(message, response.status, errors, retryAfter);

@@ -11,6 +11,7 @@ export interface QrModalProps {
   profileName?: string;
   customerEmail?: string;
   businessName?: string;
+  customerId?: number;
 }
 
 export const QrModal: React.FC<QrModalProps> = ({
@@ -21,6 +22,7 @@ export const QrModal: React.FC<QrModalProps> = ({
   profileName,
   customerEmail,
   businessName,
+  customerId,
 }) => {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string>('');
@@ -114,6 +116,11 @@ export const QrModal: React.FC<QrModalProps> = ({
             <h3 style={{ fontWeight: 700, fontSize: '1.2rem', marginBottom: '0.25rem', color: 'var(--color-text)' }}>
               {customerName}
             </h3>
+          )}
+          {customerId && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
+              ID Cliente: <strong>#{customerId}</strong>
+            </div>
           )}
           {profileName && (
             <div style={{ marginBottom: '0.75rem' }}>
@@ -241,9 +248,14 @@ export const QrModal: React.FC<QrModalProps> = ({
         <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 0.5rem 0' }}>
           {effectiveBizName}
         </h2>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '1rem', letterSpacing: '0.05em' }}>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.5rem', letterSpacing: '0.05em' }}>
           Profilo: {effectiveProfile}
         </div>
+        {customerId && (
+          <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#334155', marginBottom: '1rem' }}>
+            ID Cliente: #{customerId}
+          </div>
+        )}
         {qrSrc && (
           <img
             src={qrSrc}

@@ -410,8 +410,11 @@ export const PublicCardPage: React.FC = () => {
               <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600 }}>
                 Titolare Conto
               </div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 700 }}>
-                {cardData.customer.first_name} {cardData.customer.last_name}
+              <div style={{ fontSize: '1.15rem', fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{cardData.customer.first_name} {cardData.customer.last_name}</span>
+                {cardData.customer.id && (
+                  <span className="badge badge-secondary" style={{ fontSize: '0.75rem' }}>ID #{cardData.customer.id}</span>
+                )}
               </div>
               {(cardData.customer.phone || cardData.customer.email) && (
                 <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
@@ -435,10 +438,10 @@ export const PublicCardPage: React.FC = () => {
             <div style={{ marginBottom: '1.25rem', background: '#f8fafc', padding: '0.85rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600 }}>
                 <span>Prossimo premio: {cardData.next_reward.name}</span>
-                <span>{cardData.next_reward.progress_percent}%</span>
+                <span>{(cardData.next_reward.progress_percent ?? cardData.next_reward.progress_percentage ?? 0)}%</span>
               </div>
               <div className="progress-bar-bg">
-                <div className="progress-bar-fill" style={{ width: `${Math.min(100, cardData.next_reward.progress_percent)}%` }} />
+                <div className="progress-bar-fill" style={{ width: `${Math.min(100, Math.max(0, (cardData.next_reward.progress_percent ?? cardData.next_reward.progress_percentage ?? 0)))}%` }} />
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', textAlign: 'right' }}>
                 Mancano {cardData.next_reward.points_needed} punti

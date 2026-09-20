@@ -336,8 +336,14 @@ final class CustomerService
         $params = ['business_id' => $businessId];
 
         if (!empty($filters['search'])) {
-            $search = '%' . trim((string) $filters['search']) . '%';
-            $where[] = "(`first_name` LIKE :search_fname OR `last_name` LIKE :search_lname OR `phone` LIKE :search_phone OR `email` LIKE :search_email)";
+            $rawSearch = trim((string) $filters['search']);
+            $search = '%' . $rawSearch . '%';
+            if (ctype_digit($rawSearch)) {
+                $where[] = "(`id` = :search_id OR `first_name` LIKE :search_fname OR `last_name` LIKE :search_lname OR `phone` LIKE :search_phone OR `email` LIKE :search_email)";
+                $params['search_id'] = (int) $rawSearch;
+            } else {
+                $where[] = "(`first_name` LIKE :search_fname OR `last_name` LIKE :search_lname OR `phone` LIKE :search_phone OR `email` LIKE :search_email)";
+            }
             $params['search_fname'] = $search;
             $params['search_lname'] = $search;
             $params['search_phone'] = $search;

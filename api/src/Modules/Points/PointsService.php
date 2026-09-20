@@ -271,6 +271,69 @@ final class PointsService
     }
 
     /**
+     * Lista il transato/storico punti complessivo di un negozio con paginazione e info cliente.
+     *
+     * @return array{data: array<int, array<string, mixed>>, pagination: array<string, int>}
+     */
+    public function getBusinessTransactions(int $businessId, int $page = 1, int $perPage = 20): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $offset = ($page - 1) * $perPage;
+
+        $countStmt = $this->pdo->prepare("
+            SELECT COUNT(*)
+            FROM `points_transactions`
+            WHERE `business_id` = :business_id
+        ");
+        $countStmt->execute(['business_id' => $businessId]);
+        $total = (int) $countStmt->fetchColumn();
+
+        $stmt = $this->pdo->prepare("
+            SELECT pt.*,
+                   u.`name` AS `actor_name`,
+                   c.`id` AS `customer_id`,
+                   c.`first_name`,
+                   c.`last_name`,
+                   c.`phone`,
+                   c.`email`,
+                   cp.`name` AS `profile_name`,
+                   cp.`code` AS `profile_code`
+            FROM `points_transactions` pt
+            INNER JOIN `loyalty_accounts` la ON pt.`loyalty_account_id` = la.`id`
+            INNER JOIN `customers` c ON la.`customer_id` = c.`id`
+            INNER JOIN `card_profiles` cp ON la.`card_profile_id` = cp.`id`
+            LEFT JOIN `users` u ON pt.`actor_user_id` = u.`id`
+            WHERE pt.`business_id` = :business_id
+            ORDER BY pt.`id` DESC
+            LIMIT {$perPage} OFFSET {$offset}
+        ");
+        $stmt->execute(['business_id' => $businessId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $items = array_map(function (array $row): array {
+            $formatted = $this->formatTransaction($row);
+            $formatted['customer_id'] = (int) $row['customer_id'];
+            $formatted['customer_name'] = trim($row['first_name'] . ' ' . $row['last_name']);
+            $formatted['customer_phone'] = $row['phone'] ? (string) $row['phone'] : null;
+            $formatted['customer_email'] = $row['email'] ? (string) $row['email'] : null;
+            $formatted['profile_name'] = (string) $row['profile_name'];
+            $formatted['profile_code'] = (string) $row['profile_code'];
+            return $formatted;
+        }, $rows);
+
+        return [
+            'data' => $items,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'total_pages' => (int) ceil($total / $perPage),
+            ],
+        ];
+    }
+
+    /**
      * Formatea un registro de transacción.
      */
     private function formatTransaction(array $row): array

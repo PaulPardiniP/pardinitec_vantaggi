@@ -542,15 +542,21 @@ export const pointsApi = {
     return res.data;
   },
 
-  async calculate(businessId: number, amount: number): Promise<{ amount: number; calculated_points: number; mode: string }> {
-    const res = await apiRequest<{ success: boolean; data: { amount: number; calculated_points: number; mode: string } }>(
+  async calculate(businessId: number, amount: number): Promise<{ spent_amount: number; points: number; calculated_points: number }> {
+    const res = await apiRequest<{ success: boolean; data: { spent_amount?: number; points?: number; calculated_points?: number } }>(
       `/api/v1/businesses/${businessId}/loyalty-program/calculate`,
       {
         method: 'POST',
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ spent_amount: amount, amount }),
       }
     );
-    return res.data;
+    const data = res.data || {};
+    const pts = data.calculated_points ?? data.points ?? 0;
+    return {
+      spent_amount: data.spent_amount ?? amount,
+      points: pts,
+      calculated_points: pts,
+    };
   },
 
   async adjust(
@@ -597,13 +603,28 @@ export const pointsApi = {
     });
     return { data: res.data, pagination: res.pagination };
   },
+
+  async listBusinessTransactions(
+    businessId: number,
+    page = 1,
+    perPage = 10
+  ): Promise<{ data: (PointsTransaction & { customer_id?: number; customer_name?: string; customer_phone?: string; customer_email?: string; profile_name?: string; profile_code?: string })[]; pagination: { page: number; per_page: number; total: number; total_pages: number } }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: (PointsTransaction & { customer_id?: number; customer_name?: string; customer_phone?: string; customer_email?: string; profile_name?: string; profile_code?: string })[];
+      pagination: { page: number; per_page: number; total: number; total_pages: number };
+    }>(`/api/v1/businesses/${businessId}/points/transactions`, {
+      params: { page, per_page: perPage },
+    });
+    return { data: res.data || [], pagination: res.pagination || { page, per_page: perPage, total: 0, total_pages: 1 } };
+  },
 };
 
 // ==================== REWARDS ====================
 export const rewardsApi = {
-  async list(businessId: number, all = false): Promise<Reward[]> {
+  async list(businessId: number, all = false, profile?: string): Promise<Reward[]> {
     const res = await apiRequest<{ success: boolean; data: Reward[] }>(`/api/v1/businesses/${businessId}/rewards`, {
-      params: { all: all ? '1' : undefined },
+      params: { all: all ? '1' : undefined, profile },
     });
     return res.data;
   },
@@ -656,9 +677,9 @@ export const rewardsApi = {
 
 // ==================== OFFERS ====================
 export const offersApi = {
-  async list(businessId: number, all = false): Promise<Offer[]> {
+  async list(businessId: number, all = false, targetAudience?: string): Promise<Offer[]> {
     const res = await apiRequest<{ success: boolean; data: Offer[] }>(`/api/v1/businesses/${businessId}/offers`, {
-      params: { all: all ? '1' : undefined },
+      params: { all: all ? '1' : undefined, target_audience: targetAudience },
     });
     return res.data;
   },

@@ -11,6 +11,7 @@ use App\Core\Security\Csrf;
 use App\Modules\Businesses\AuthorizationService;
 use App\Modules\Businesses\ForbiddenException;
 use App\Modules\Businesses\Permission;
+use App\Modules\Loyalty\CapabilityService;
 use InvalidArgumentException;
 use Throwable;
 
@@ -19,15 +20,18 @@ final class OfferController
     private OfferService $offerService;
     private AuthService $authService;
     private AuthorizationService $authzService;
+    private CapabilityService $capabilityService;
 
     public function __construct(
         ?OfferService $offerService = null,
         ?AuthService $authService = null,
-        ?AuthorizationService $authzService = null
+        ?AuthorizationService $authzService = null,
+        ?CapabilityService $capabilityService = null
     ) {
         $this->offerService = $offerService ?? new OfferService();
         $this->authService = $authService ?? new AuthService();
         $this->authzService = $authzService ?? new AuthorizationService();
+        $this->capabilityService = $capabilityService ?? new CapabilityService();
     }
 
     private function authenticate(Request $request): array
@@ -61,10 +65,24 @@ final class OfferController
         try {
             $this->authzService->requireMembership((int) $session['user_id'], $businessId);
 
+            $hasOffers = $this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers');
+            $hasVip = $this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers');
+
+            if (!$hasOffers && !$hasVip) {
+                Response::error('Nessun pacchetto promozioni o VIP attivo per questo commercio.', 403);
+            }
+
             $onlyActive = $request->getQuery('all') !== '1';
             $capability = $request->getQuery('capability');
+            $targetAudience = $request->getQuery('target_audience');
 
-            $offers = $this->offerService->listOffers($businessId, $onlyActive, null, $capability);
+            $offers = $this->offerService->listOffers(
+                $businessId,
+                $onlyActive,
+                null,
+                $capability ? (string) $capability : null,
+                $targetAudience ? (string) $targetAudience : null
+            );
 
             Response::success('Elenco offerte recuperato.', [
                 'data' => $offers,
@@ -88,6 +106,21 @@ final class OfferController
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::OFFER_MANAGE);
 
             $body = $request->getJsonBody();
+            $targetAudience = $body['target_audience'] ?? 'vantaggi';
+
+            if ($targetAudience === 'vantaggi' && !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers')) {
+                Response::error('Il modulo Vantaggi non è attivo per questo commercio.', 403);
+            }
+            if ($targetAudience === 'vip' && !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                Response::error('Il modulo VIP non è attivo per questo commercio.', 403);
+            }
+            if ($targetAudience === 'vantaggi_vip') {
+                if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers') ||
+                    !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                    Response::error('È necessario avere attivi sia il modulo Vantaggi sia il modulo VIP per condividere offerte.', 403);
+                }
+            }
+
             $offer = $this->offerService->createOffer($businessId, $body);
 
             Response::success('Offerta creata con successo.', [
@@ -139,6 +172,22 @@ final class OfferController
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::OFFER_MANAGE);
 
             $body = $request->getJsonBody();
+            if (isset($body['target_audience'])) {
+                $targetAudience = $body['target_audience'];
+                if ($targetAudience === 'vantaggi' && !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers')) {
+                    Response::error('Il modulo Vantaggi non è attivo per questo commercio.', 403);
+                }
+                if ($targetAudience === 'vip' && !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                    Response::error('Il modulo VIP non è attivo per questo commercio.', 403);
+                }
+                if ($targetAudience === 'vantaggi_vip') {
+                    if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers') ||
+                        !$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                        Response::error('È necessario avere attivi sia il modulo Vantaggi sia il modulo VIP per condividere offerte.', 403);
+                    }
+                }
+            }
+
             $updated = $this->offerService->updateOffer($businessId, $offerId, $body);
 
             Response::success('Offerta aggiornata con successo.', [

@@ -360,6 +360,10 @@ if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts
     $pointsController->listTransactions($request, (int) $matches[1], (int) $matches[2]);
 }
 
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/points/transactions$#', $cleanPath, $matches)) {
+    $pointsController->listBusinessTransactions($request, (int) $matches[1]);
+}
+
 // Rutas de Premios (MÃ³dulo Rewards)
 $rewardController = new RewardController();
 

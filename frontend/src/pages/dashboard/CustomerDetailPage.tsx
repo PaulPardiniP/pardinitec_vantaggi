@@ -892,6 +892,7 @@ export const CustomerDetailPage: React.FC = () => {
           profileName={qrDisplay.profileName}
           customerEmail={customer?.email || undefined}
           businessName={activeBusiness?.name}
+          customerId={customer?.id}
         />
       )}
     </div>

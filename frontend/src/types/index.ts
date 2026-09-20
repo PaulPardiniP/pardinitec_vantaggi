@@ -239,6 +239,7 @@ export interface PublicCardView {
     points_cost: number;
     points_needed: number;
     progress_percent: number;
+    progress_percentage?: number;
   } | null;
   rewards?: Reward[];
   offers?: Offer[];

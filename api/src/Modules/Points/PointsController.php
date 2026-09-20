@@ -11,6 +11,7 @@ use App\Core\Security\Csrf;
 use App\Modules\Businesses\AuthorizationService;
 use App\Modules\Businesses\ForbiddenException;
 use App\Modules\Businesses\Permission;
+use App\Modules\Loyalty\CapabilityService;
 use InvalidArgumentException;
 use Throwable;
 
@@ -20,17 +21,20 @@ final class PointsController
     private LoyaltyProgramService $programService;
     private AuthService $authService;
     private AuthorizationService $authzService;
+    private CapabilityService $capabilityService;
 
     public function __construct(
         ?PointsService $pointsService = null,
         ?LoyaltyProgramService $programService = null,
         ?AuthService $authService = null,
-        ?AuthorizationService $authzService = null
+        ?AuthorizationService $authzService = null,
+        ?CapabilityService $capabilityService = null
     ) {
         $this->pointsService = $pointsService ?? new PointsService();
         $this->programService = $programService ?? new LoyaltyProgramService();
         $this->authService = $authService ?? new AuthService();
         $this->authzService = $authzService ?? new AuthorizationService();
+        $this->capabilityService = $capabilityService ?? new CapabilityService();
     }
 
     private function authenticate(Request $request): array
@@ -112,6 +116,18 @@ final class PointsController
         try {
             $this->authzService->requireMembership((int) $session['user_id'], $businessId);
 
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'points')) {
+                Response::error('Il modulo Punti non è attivo per questo commercio.', 403);
+            }
+
+            $program = $this->programService->getProgram($businessId);
+            if ($program['status'] !== 'active') {
+                Response::error('La regola di calcolo punti non è attiva.', 422);
+            }
+            if ($program['program_type'] === 'manual') {
+                Response::error('Il programma è impostato su accredito manuale. Inserisci i punti manualmente.', 422);
+            }
+
             $body = $request->getJsonBody();
             $spentAmount = isset($body['spent_amount']) ? (float) $body['spent_amount'] : 0.0;
 
@@ -120,6 +136,7 @@ final class PointsController
             Response::success('Calcolo punti effettuato.', [
                 'spent_amount' => $spentAmount,
                 'points' => $points,
+                'calculated_points' => $points,
             ], 200);
         } catch (ForbiddenException $e) {
             Response::error($e->getMessage(), 403);
@@ -199,6 +216,33 @@ final class PointsController
             $perPage = max(1, min(100, (int) $request->getQuery('per_page', 20)));
 
             $data = $this->pointsService->getAccountTransactions($businessId, $loyaltyAccountId, $page, $perPage);
+
+            Response::success('Storico movimenti punti recuperato correttamente.', $data, 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero dello storico punti.', 500);
+        }
+    }
+
+    /**
+     * GET /api/v1/businesses/{id}/points/transactions
+     */
+    public function listBusinessTransactions(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::CUSTOMER_VIEW);
+
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'points')) {
+                Response::error('Il modulo Punti non è attivo per questo commercio.', 403);
+            }
+
+            $page = max(1, (int) $request->getQuery('page', 1));
+            $perPage = max(1, min(100, (int) $request->getQuery('per_page', 20)));
+
+            $data = $this->pointsService->getBusinessTransactions($businessId, $page, $perPage);
 
             Response::success('Storico movimenti punti recuperato correttamente.', $data, 200);
         } catch (ForbiddenException $e) {

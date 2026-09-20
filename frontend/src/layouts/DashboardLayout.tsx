@@ -147,22 +147,27 @@ export const DashboardLayout: React.FC = () => {
           )}
           {hasPermission('points.adjust') && hasModule('points') && (
             <NavLink to="/dashboard/points" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Punti
+              Accredito punti
             </NavLink>
           )}
           {hasPermission('reward.redeem') && hasModule('rewards') && (
             <NavLink to="/dashboard/rewards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Premi con Punti
+              Premi con punti
             </NavLink>
           )}
           {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('offers') && (
-            <NavLink to="/dashboard/offers" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Offerte Vantaggi & VIP
+            <NavLink to="/dashboard/vantaggi" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+              Vantaggi
+            </NavLink>
+          )}
+          {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('vip_offers') && (
+            <NavLink to="/dashboard/vip" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+              VIP
             </NavLink>
           )}
           {hasPermission('card.assign') && (
             <NavLink to="/dashboard/cards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Carte Fisiche
+              Carte fisiche
             </NavLink>
           )}
           {hasPermission('members.view') && (
@@ -170,14 +175,14 @@ export const DashboardLayout: React.FC = () => {
               Membri
             </NavLink>
           )}
-          {hasPermission('business.view') && (
-            <NavLink to="/dashboard/settings" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Impostazioni
-            </NavLink>
-          )}
           {hasPermission('campaign.send') && hasModule('campaigns') && (
             <NavLink to="/dashboard/campaigns" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
               Campagne
+            </NavLink>
+          )}
+          {hasPermission('business.view') && (
+            <NavLink to="/dashboard/settings" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+              Impostazioni
             </NavLink>
           )}
         </nav>
