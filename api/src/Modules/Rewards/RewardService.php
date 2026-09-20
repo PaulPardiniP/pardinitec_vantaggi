@@ -133,7 +133,7 @@ final class RewardService
             ? $data['card_profile_id']
             : (array_key_exists('min_profile_id', $data) ? $data['min_profile_id'] : $existing['min_profile_id']);
         $minProfileId = $rawProfileId !== null && $rawProfileId !== '' ? (int) $rawProfileId : null;
-        $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive'], true) ? (string) $data['status'] : $existing['status'];
+        $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive', 'archived'], true) ? (string) $data['status'] : $existing['status'];
         $validFrom = array_key_exists('valid_from', $data) ? ($data['valid_from'] ?: null) : $existing['valid_from'];
         $validUntil = array_key_exists('valid_until', $data) ? ($data['valid_until'] ?: null) : $existing['valid_until'];
 
@@ -165,13 +165,78 @@ final class RewardService
     }
 
     /**
-     * Desactiva un premio (conserva historial sin borrado físico).
+     * Elimina definitivamente se privo di canji storici, oppure archivia se ha relazioni storiche.
+     *
+     * @return array{action: 'deleted'|'archived', message: string}
      */
-    public function deleteReward(int $businessId, int $rewardId): bool
+    public function deleteReward(int $businessId, int $rewardId): array
     {
+        $existing = $this->getReward($businessId, $rewardId);
+        if (!$existing) {
+            throw new InvalidArgumentException('Premio non trovato.');
+        }
+
+        // Verifica se esistono canji storici associati a questo premio
+        $checkStmt = $this->pdo->prepare("
+            SELECT COUNT(*) FROM `reward_redemptions`
+            WHERE `reward_id` = :reward_id AND `business_id` = :business_id
+        ");
+        $checkStmt->execute([
+            'reward_id' => $rewardId,
+            'business_id' => $businessId,
+        ]);
+        $redemptionsCount = (int) $checkStmt->fetchColumn();
+
+        if ($redemptionsCount === 0) {
+            // Nessuna relazione storica: cancellazione fisica definitiva
+            $delStmt = $this->pdo->prepare("
+                DELETE FROM `rewards`
+                WHERE `id` = :id AND `business_id` = :business_id
+            ");
+            $delStmt->execute([
+                'id' => $rewardId,
+                'business_id' => $businessId,
+            ]);
+
+            return [
+                'action' => 'deleted',
+                'message' => 'Premio eliminato definitivamente dal catalogo.',
+            ];
+        }
+
+        // Ha relazioni storiche: archiviazione per preservare l'integrità dei movimenti
+        $archStmt = $this->pdo->prepare("
+            UPDATE `rewards`
+            SET `status` = 'archived',
+                `updated_at` = UTC_TIMESTAMP()
+            WHERE `id` = :id AND `business_id` = :business_id
+        ");
+        $archStmt->execute([
+            'id' => $rewardId,
+            'business_id' => $businessId,
+        ]);
+
+        return [
+            'action' => 'archived',
+            'message' => 'Premio archiviato nei contenuti storici poiché contiene canji registrati.',
+        ];
+    }
+
+    /**
+     * Ripristina un premio archiviato riportandolo allo stato attivo.
+     *
+     * @return array<string, mixed>
+     */
+    public function restoreReward(int $businessId, int $rewardId): array
+    {
+        $existing = $this->getReward($businessId, $rewardId);
+        if (!$existing) {
+            throw new InvalidArgumentException('Premio non trovato.');
+        }
+
         $stmt = $this->pdo->prepare("
             UPDATE `rewards`
-            SET `status` = 'inactive',
+            SET `status` = 'active',
                 `updated_at` = UTC_TIMESTAMP()
             WHERE `id` = :id AND `business_id` = :business_id
         ");
@@ -180,7 +245,7 @@ final class RewardService
             'business_id' => $businessId,
         ]);
 
-        return $stmt->rowCount() > 0;
+        return $this->getReward($businessId, $rewardId) ?? [];
     }
 
     /**
@@ -209,7 +274,7 @@ final class RewardService
      *
      * @return array<int, array<string, mixed>>
      */
-    public function listRewards(int $businessId, bool $onlyActive = true, ?int $cardProfileId = null, ?string $profileCode = null): array
+    public function listRewards(int $businessId, bool $onlyActive = true, ?int $cardProfileId = null, ?string $profileCode = null, ?string $statusFilter = null): array
     {
         if ($cardProfileId === null && $profileCode !== null) {
             $cardProfileId = $this->getProfileIdByCode(strtolower(trim($profileCode)));
@@ -222,6 +287,10 @@ final class RewardService
             $where[] = "r.`status` = 'active'";
             $where[] = "(r.`valid_from` IS NULL OR r.`valid_from` <= UTC_TIMESTAMP())";
             $where[] = "(r.`valid_until` IS NULL OR r.`valid_until` >= UTC_TIMESTAMP())";
+        } elseif ($statusFilter === 'archived') {
+            $where[] = "r.`status` = 'archived'";
+        } else {
+            $where[] = "r.`status` != 'archived'";
         }
 
         if ($cardProfileId !== null) {

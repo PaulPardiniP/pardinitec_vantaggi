@@ -43,6 +43,10 @@ export const RewardsPage: React.FC = () => {
   const [isRedeeming, setIsRedeeming] = useState(false);
   const [redeemModalError, setRedeemModalError] = useState<string | null>(null);
 
+  const [viewTab, setViewTab] = useState<'catalog' | 'archived'>('catalog');
+  const [archivedRewards, setArchivedRewards] = useState<Reward[]>([]);
+  const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+
   const canManage = hasPermission('settings.manage') || hasPermission('business.update');
   const canRedeem = hasPermission('reward.redeem');
 
@@ -64,9 +68,53 @@ export const RewardsPage: React.FC = () => {
     }
   };
 
+  const loadArchived = async () => {
+    if (!activeBusiness) return;
+    setIsLoadingArchived(true);
+    try {
+      const list = await rewardsApi.list(activeBusiness.id, false, 'punti', 'archived');
+      setArchivedRewards(list);
+    } catch {
+      setArchivedRewards([]);
+    } finally {
+      setIsLoadingArchived(false);
+    }
+  };
+
   useEffect(() => {
     loadRewards();
+    loadArchived();
   }, [activeBusiness]);
+
+  const handleToggleStatus = async (r: Reward) => {
+    if (!activeBusiness) return;
+    const newStatus = r.status === 'active' ? 'inactive' : 'active';
+    try {
+      await rewardsApi.update(activeBusiness.id, r.id, { status: newStatus });
+      setFeedback({
+        type: 'success',
+        message: newStatus === 'active' ? `Premio "${r.name}" attivato con successo.` : `Premio "${r.name}" disattivato.`,
+      });
+      await loadRewards();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la modifica dello stato del premio.' });
+    }
+  };
+
+  const handleRestoreReward = async (r: Reward) => {
+    if (!activeBusiness) return;
+    try {
+      await rewardsApi.restore(activeBusiness.id, r.id);
+      setFeedback({
+        type: 'success',
+        message: `Premio "${r.name}" ripristinato con successo nel catalogo attivo!`,
+      });
+      await loadRewards();
+      await loadArchived();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante il ripristino del premio.' });
+    }
+  };
 
   const handleOpenCreate = () => {
     setEditingReward(null);
@@ -175,10 +223,16 @@ export const RewardsPage: React.FC = () => {
     setIsSubmitting(true);
     setFeedback(null);
     try {
-      await rewardsApi.delete(activeBusiness.id, rewardToDelete.id);
-      setFeedback({ type: 'success', message: 'Premio eliminato dal catalogo.' });
+      const res = await rewardsApi.delete(activeBusiness.id, rewardToDelete.id);
+      setFeedback({
+        type: 'success',
+        message: res.action === 'deleted'
+          ? 'Premio eliminato definitivamente dal catalogo.'
+          : 'Premio archiviato e spostato in "Contenuti archiviati" poiché contiene storico contabile.',
+      });
       setRewardToDelete(null);
       await loadRewards();
+      await loadArchived();
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Errore durante l\'eliminazione del premio.' });
     } finally {
@@ -241,34 +295,125 @@ export const RewardsPage: React.FC = () => {
 
       {feedback && <Alert type={feedback.type} message={feedback.message} onDismiss={() => setFeedback(null)} />}
 
-      {rewards.length === 0 ? (
-        <EmptyState
-          title="Nessun premio con punti disponibile"
-          description="Aggiungi il primo premio del programma fedeltà specificando il punteggio necessario."
-          action={
-            canManage ? (
-              <Button variant="primary" onClick={handleOpenCreate}>
-                Nuovo Premio
-              </Button>
-            ) : undefined
-          }
-        />
+      {/* Tabs Viste: Catalogo vs Archiviati */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem' }}>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'catalog' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setViewTab('catalog')}
+        >
+          🏆 Premi in catalogo ({rewards.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'archived' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => {
+            setViewTab('archived');
+            loadArchived();
+          }}
+        >
+          📦 Contenuti archiviati ({archivedRewards.length})
+        </button>
+      </div>
+
+      {viewTab === 'catalog' ? (
+        rewards.length === 0 ? (
+          <EmptyState
+            title="Nessun premio con punti disponibile"
+            description="Aggiungi il primo premio del programma fedeltà specificando il punteggio necessario."
+            action={
+              canManage ? (
+                <Button variant="primary" onClick={handleOpenCreate}>
+                  Nuovo Premio
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nome Premio</th>
+                  <th>Punti Richiesti</th>
+                  <th>Destinatari</th>
+                  <th>Stato</th>
+                  <th style={{ textAlign: 'right' }}>Azioni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rewards.map((r) => {
+                  return (
+                    <tr key={r.id}>
+                      <td>#{r.id}</td>
+                      <td>
+                        <strong>{r.name}</strong>
+                        {r.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{r.description}</div>}
+                      </td>
+                      <td>
+                        <span className="badge badge-primary">{r.points_cost} pt</span>
+                      </td>
+                      <td>
+                        <span className="badge badge-secondary">Clienti Punti</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${r.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                          {r.status === 'active' ? 'Attivo' : 'Inattivo'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {canRedeem && r.status === 'active' && (
+                            <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(r)}>
+                              🎁 Riscatta
+                            </Button>
+                          )}
+                          {canManage && (
+                            <>
+                              <Button variant="outline" size="sm" onClick={() => handleToggleStatus(r)}>
+                                {r.status === 'active' ? 'Disattiva' : 'Attiva'}
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => handleOpenEdit(r)}>
+                                Modifica
+                              </Button>
+                              <Button variant="danger" size="sm" onClick={() => setRewardToDelete(r)}>
+                                Elimina
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : (
-        <div className="table-responsive">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Nome Premio</th>
-                <th>Punti Richiesti</th>
-                <th>Destinatari</th>
-                <th>Stato</th>
-                <th style={{ textAlign: 'right' }}>Azioni</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rewards.map((r) => {
-                return (
+        isLoadingArchived ? (
+          <Spinner size="md" text="Caricamento archivio premi..." />
+        ) : archivedRewards.length === 0 ? (
+          <EmptyState
+            title="Nessun contenuto archiviato"
+            description="I premi eliminati che contengono storico di canji vengono conservati qui per consultazione."
+          />
+        ) : (
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nome Premio</th>
+                  <th>Punti Richiesti</th>
+                  <th>Destinatari</th>
+                  <th>Stato</th>
+                  <th style={{ textAlign: 'right' }}>Azioni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archivedRewards.map((r) => (
                   <tr key={r.id}>
                     <td>#{r.id}</td>
                     <td>
@@ -282,35 +427,21 @@ export const RewardsPage: React.FC = () => {
                       <span className="badge badge-secondary">Clienti Punti</span>
                     </td>
                     <td>
-                      <span className={`badge ${r.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                        {r.status}
-                      </span>
+                      <span className="badge badge-secondary">Archiviato</span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
-                        {canRedeem && (
-                          <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(r)}>
-                            🎁 Riscatta
-                          </Button>
-                        )}
-                        {canManage && (
-                          <>
-                            <Button variant="outline" size="sm" onClick={() => handleOpenEdit(r)}>
-                              Modifica
-                            </Button>
-                            <Button variant="danger" size="sm" onClick={() => setRewardToDelete(r)}>
-                              Elimina
-                            </Button>
-                          </>
-                        )}
-                      </div>
+                      {canManage && (
+                        <Button variant="secondary" size="sm" onClick={() => handleRestoreReward(r)}>
+                          🔄 Ripristina
+                        </Button>
+                      )}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
 
       {/* Modale Crea / Modifica */}

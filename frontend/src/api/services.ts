@@ -622,9 +622,9 @@ export const pointsApi = {
 
 // ==================== REWARDS ====================
 export const rewardsApi = {
-  async list(businessId: number, all = false, profile?: string): Promise<Reward[]> {
+  async list(businessId: number, all = false, profile?: string, status?: string): Promise<Reward[]> {
     const res = await apiRequest<{ success: boolean; data: Reward[] }>(`/api/v1/businesses/${businessId}/rewards`, {
-      params: { all: all ? '1' : undefined, profile },
+      params: { all: all ? '1' : undefined, profile, status },
     });
     return res.data;
   },
@@ -645,10 +645,20 @@ export const rewardsApi = {
     return res.data;
   },
 
-  async delete(businessId: number, rewardId: number): Promise<void> {
-    await apiRequest(`/api/v1/businesses/${businessId}/rewards/${rewardId}`, {
-      method: 'DELETE',
-    });
+  async delete(businessId: number, rewardId: number): Promise<{ action: 'deleted' | 'archived'; message: string }> {
+    const res = await apiRequest<{ success: boolean; data: { action: 'deleted' | 'archived'; message: string }; message?: string }>(
+      `/api/v1/businesses/${businessId}/rewards/${rewardId}`,
+      { method: 'DELETE' }
+    );
+    return res.data || { action: 'deleted', message: res.message || '' };
+  },
+
+  async restore(businessId: number, rewardId: number): Promise<Reward> {
+    const res = await apiRequest<{ success: boolean; data: Reward }>(
+      `/api/v1/businesses/${businessId}/rewards/${rewardId}/restore`,
+      { method: 'POST' }
+    );
+    return res.data;
   },
 
   async redeem(
@@ -677,9 +687,9 @@ export const rewardsApi = {
 
 // ==================== OFFERS ====================
 export const offersApi = {
-  async list(businessId: number, all = false, targetAudience?: string): Promise<Offer[]> {
+  async list(businessId: number, all = false, targetAudience?: string, status?: string): Promise<Offer[]> {
     const res = await apiRequest<{ success: boolean; data: Offer[] }>(`/api/v1/businesses/${businessId}/offers`, {
-      params: { all: all ? '1' : undefined, target_audience: targetAudience },
+      params: { all: all ? '1' : undefined, target_audience: targetAudience, status },
     });
     return res.data;
   },
@@ -700,10 +710,20 @@ export const offersApi = {
     return res.data;
   },
 
-  async delete(businessId: number, offerId: number): Promise<void> {
-    await apiRequest(`/api/v1/businesses/${businessId}/offers/${offerId}`, {
-      method: 'DELETE',
-    });
+  async delete(businessId: number, offerId: number): Promise<{ action: 'deleted' | 'archived'; message: string }> {
+    const res = await apiRequest<{ success: boolean; data: { action: 'deleted' | 'archived'; message: string }; message?: string }>(
+      `/api/v1/businesses/${businessId}/offers/${offerId}`,
+      { method: 'DELETE' }
+    );
+    return res.data || { action: 'deleted', message: res.message || '' };
+  },
+
+  async restore(businessId: number, offerId: number): Promise<Offer> {
+    const res = await apiRequest<{ success: boolean; data: Offer }>(
+      `/api/v1/businesses/${businessId}/offers/${offerId}/restore`,
+      { method: 'POST' }
+    );
+    return res.data;
   },
 
   async redeem(

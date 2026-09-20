@@ -75,13 +75,15 @@ final class OfferController
             $onlyActive = $request->getQuery('all') !== '1';
             $capability = $request->getQuery('capability');
             $targetAudience = $request->getQuery('target_audience');
+            $status = $request->getQuery('status');
 
             $offers = $this->offerService->listOffers(
                 $businessId,
                 $onlyActive,
                 null,
                 $capability ? (string) $capability : null,
-                $targetAudience ? (string) $targetAudience : null
+                $targetAudience ? (string) $targetAudience : null,
+                $status ? (string) $status : null
             );
 
             Response::success('Elenco offerte recuperato.', [
@@ -213,13 +215,43 @@ final class OfferController
         try {
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::OFFER_MANAGE);
 
-            $this->offerService->deleteOffer($businessId, $offerId);
+            $result = $this->offerService->deleteOffer($businessId, $offerId);
+            $msg = $result['action'] === 'deleted'
+                ? 'Offerta eliminata definitivamente.'
+                : 'Offerta archiviata nei contenuti storici.';
 
-            Response::success('Offerta disattivata correttamente.', [], 200);
+            Response::success($msg, $result, 200);
         } catch (ForbiddenException $e) {
             Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
         } catch (Throwable $e) {
-            Response::error('Errore durante la disattivazione dell\'offerta.', 500);
+            Response::error('Errore durante la cancellazione dell\'offerta.', 500);
+        }
+    }
+
+    /**
+     * POST /api/v1/businesses/{id}/offers/{offerId}/restore
+     */
+    public function restore(Request $request, int $businessId, int $offerId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::OFFER_MANAGE);
+
+            $offer = $this->offerService->restoreOffer($businessId, $offerId);
+
+            Response::success('Offerta ripristinata con successo.', [
+                'data' => $offer,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il ripristino dell\'offerta.', 500);
         }
     }
 

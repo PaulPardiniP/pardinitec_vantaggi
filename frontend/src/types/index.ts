@@ -164,7 +164,7 @@ export interface Reward {
   description: string | null;
   points_cost: number;
   card_profile_id: number | null;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'archived';
   created_at?: string;
 }
 
@@ -173,10 +173,10 @@ export interface Offer {
   business_id: number;
   title: string;
   description: string | null;
-  discount_type: 'percentage' | 'fixed';
-  discount_value: number;
+  discount_type: 'percentage' | 'fixed' | 'text';
+  discount_value: number | null;
   offer_type?: string;
-  discount_percentage?: number;
+  discount_percentage?: number | null;
   formatted_benefit?: string;
   target_audience?: 'vantaggi' | 'vip' | 'vantaggi_vip' | 'all';
   is_vip: boolean;
@@ -184,7 +184,7 @@ export interface Offer {
   profile_name?: string | null;
   profile_code?: string | null;
   is_single_use: boolean;
-  status: 'active' | 'inactive' | 'expired';
+  status: 'active' | 'inactive' | 'expired' | 'archived';
   start_date?: string | null;
   end_date?: string | null;
   created_at?: string;

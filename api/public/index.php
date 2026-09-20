@@ -387,6 +387,10 @@ if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/rewards/(\d+)
     $rewardController->delete($request, (int) $matches[1], (int) $matches[2]);
 }
 
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/rewards/(\d+)/restore$#', $cleanPath, $matches)) {
+    $rewardController->restore($request, (int) $matches[1], (int) $matches[2]);
+}
+
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/rewards/(\d+)/redeem$#', $cleanPath, $matches)) {
     $rewardController->redeem($request, (int) $matches[1], (int) $matches[2], (int) $matches[3]);
 }
@@ -412,6 +416,10 @@ if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)$#',
 
 if ($method === 'DELETE' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)$#', $cleanPath, $matches)) {
     $offerController->delete($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/offers/(\d+)/restore$#', $cleanPath, $matches)) {
+    $offerController->restore($request, (int) $matches[1], (int) $matches[2]);
 }
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/offers/(\d+)/redeem$#', $cleanPath, $matches)) {

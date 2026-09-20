@@ -19,12 +19,16 @@ export const VantaggiPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const [viewTab, setViewTab] = useState<'catalog' | 'archived'>('catalog');
+  const [archivedOffers, setArchivedOffers] = useState<Offer[]>([]);
+  const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+
   // Modale Crea / Modifica Vantaggio
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed' | 'text'>('percentage');
   const [discountValueStr, setDiscountValueStr] = useState('10');
   const [shareWithVip, setShareWithVip] = useState(false);
   const [isSingleUse, setIsSingleUse] = useState(true);
@@ -55,7 +59,6 @@ export const VantaggiPage: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      // Carica tutte le offerte e filtra solo quelle per Vantaggi (vantaggi o vantaggi_vip)
       const list = await offersApi.list(activeBusiness.id, true);
       const vantaggiList = list.filter((o) => {
         const aud = o.target_audience;
@@ -69,9 +72,54 @@ export const VantaggiPage: React.FC = () => {
     }
   };
 
+  const loadArchived = async () => {
+    if (!activeBusiness) return;
+    setIsLoadingArchived(true);
+    try {
+      const list = await offersApi.list(activeBusiness.id, false, undefined, 'archived');
+      const vantaggiList = list.filter((o) => {
+        const aud = o.target_audience;
+        return aud === 'vantaggi' || aud === 'vantaggi_vip' || (aud !== 'vip' && !o.is_vip);
+      });
+      setArchivedOffers(vantaggiList);
+    } catch {
+      setArchivedOffers([]);
+    } finally {
+      setIsLoadingArchived(false);
+    }
+  };
+
   useEffect(() => {
     loadOffers();
+    loadArchived();
   }, [activeBusiness]);
+
+  const handleToggleStatus = async (o: Offer) => {
+    if (!activeBusiness) return;
+    const newStatus = o.status === 'active' ? 'inactive' : 'active';
+    try {
+      await offersApi.update(activeBusiness.id, o.id, { status: newStatus });
+      setFeedback({
+        type: 'success',
+        message: newStatus === 'active' ? `Vantaggio "${o.title}" attivato con successo.` : `Vantaggio "${o.title}" disattivato.`,
+      });
+      await loadOffers();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la modifica dello stato.' });
+    }
+  };
+
+  const handleRestoreOffer = async (o: Offer) => {
+    if (!activeBusiness) return;
+    try {
+      await offersApi.restore(activeBusiness.id, o.id);
+      setFeedback({ type: 'success', message: `Vantaggio "${o.title}" ripristinato con successo nel catalogo attivo!` });
+      await loadOffers();
+      await loadArchived();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante il ripristino del vantaggio.' });
+    }
+  };
 
   const handleOpenCreate = () => {
     setEditingOffer(null);
@@ -88,10 +136,15 @@ export const VantaggiPage: React.FC = () => {
     setEditingOffer(o);
     setTitle(o.title);
     setDescription(o.description || '');
-    const isFixed = o.discount_type === 'fixed' || o.offer_type === 'discount';
-    setDiscountType(isFixed ? 'fixed' : 'percentage');
-    const val = o.discount_value ?? o.discount_percentage ?? 10;
-    setDiscountValueStr(val.toString());
+    if (o.discount_type === 'text' || o.discount_percentage === null) {
+      setDiscountType('text');
+      setDiscountValueStr('');
+    } else {
+      const isFixed = o.discount_type === 'fixed' || o.offer_type === 'discount';
+      setDiscountType(isFixed ? 'fixed' : 'percentage');
+      const val = o.discount_value ?? o.discount_percentage ?? 10;
+      setDiscountValueStr(val.toString());
+    }
     setShareWithVip(o.target_audience === 'vantaggi_vip');
     setIsSingleUse(o.is_single_use);
     setIsFormOpen(true);
@@ -101,14 +154,17 @@ export const VantaggiPage: React.FC = () => {
     e.preventDefault();
     if (!activeBusiness) return;
 
-    const parsedVal = parseFloat(discountValueStr.replace(',', '.'));
-    if (isNaN(parsedVal) || parsedVal <= 0) {
-      setFeedback({ type: 'error', message: 'Inserisci un valore di sconto valido maggiore di zero.' });
-      return;
-    }
-    if (discountType === 'percentage' && parsedVal > 100) {
-      setFeedback({ type: 'error', message: 'La percentuale di sconto non può superare il 100%.' });
-      return;
+    let parsedVal: number | null = null;
+    if (discountType !== 'text') {
+      parsedVal = parseFloat(discountValueStr.replace(',', '.'));
+      if (isNaN(parsedVal) || parsedVal <= 0) {
+        setFeedback({ type: 'error', message: 'Inserisci un valore di sconto valido maggiore di zero.' });
+        return;
+      }
+      if (discountType === 'percentage' && parsedVal > 100) {
+        setFeedback({ type: 'error', message: 'La percentuale di sconto non può superare il 100%.' });
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -146,12 +202,18 @@ export const VantaggiPage: React.FC = () => {
     setIsSubmitting(true);
     setFeedback(null);
     try {
-      await offersApi.delete(activeBusiness.id, offerToDelete.id);
-      setFeedback({ type: 'success', message: 'Vantaggio disattivato con successo.' });
+      const res = await offersApi.delete(activeBusiness.id, offerToDelete.id);
+      setFeedback({
+        type: 'success',
+        message: res.action === 'deleted'
+          ? 'Vantaggio eliminato definitivamente.'
+          : 'Vantaggio archiviato nei contenuti storici poiché contiene utilizzi registrati.',
+      });
       setOfferToDelete(null);
       await loadOffers();
+      await loadArchived();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante la disattivazione.' });
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'eliminazione.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -263,90 +325,182 @@ export const VantaggiPage: React.FC = () => {
         </div>
       )}
 
-      {offers.length === 0 ? (
-        <EmptyState
-          title="Nessun vantaggio attivo"
-          description="Crea il primo vantaggio promozionale o sconto per i tuoi clienti Vantaggi."
-          action={
-            canManage ? (
-              <Button variant="primary" onClick={handleOpenCreate}>
-                + Nuovo vantaggio
-              </Button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <div className="table-responsive">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Vantaggio</th>
-                <th>Valore</th>
-                <th>Destinatari</th>
-                <th>Utilizzo</th>
-                <th>Stato</th>
-                <th style={{ textAlign: 'right' }}>Azioni</th>
-              </tr>
-            </thead>
-            <tbody>
-              {offers.map((o) => {
-                const benefitText = formatOfferBenefit(
-                  o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
-                  o.discount_value ?? o.discount_percentage ?? 0
-                );
-                const isShared = o.target_audience === 'vantaggi_vip';
+      {/* Tabs Viste: Catalogo vs Archiviati */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem' }}>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'catalog' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setViewTab('catalog')}
+        >
+          🏆 Vantaggi in corso ({offers.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'archived' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => {
+            setViewTab('archived');
+            loadArchived();
+          }}
+        >
+          📦 Contenuti archiviati ({archivedOffers.length})
+        </button>
+      </div>
 
-                return (
-                  <tr key={o.id}>
-                    <td>#{o.id}</td>
-                    <td>
-                      <strong>{o.title}</strong>
-                      {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
-                    </td>
-                    <td>
-                      <span className="badge badge-success">{benefitText}</span>
-                    </td>
-                    <td>
-                      {isShared ? (
-                        <span className="badge badge-secondary" title="Visibile anche ai clienti VIP">Vantaggi & VIP</span>
-                      ) : (
-                        <span className="badge badge-primary">Solo Vantaggi</span>
-                      )}
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.85rem' }}>{o.is_single_use ? 'Monouso' : 'Illimitato'}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${o.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                        {o.status}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
-                        {canRedeem && (
-                          <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(o)}>
-                            🏷️ Applica
+      {viewTab === 'catalog' ? (
+        offers.length === 0 ? (
+          <EmptyState
+            title="Nessun vantaggio attivo"
+            description="Crea il primo vantaggio promozionale o sconto per i tuoi clienti Vantaggi."
+            action={
+              canManage ? (
+                <Button variant="primary" onClick={handleOpenCreate}>
+                  + Nuovo vantaggio
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Vantaggio</th>
+                  <th>Valore</th>
+                  <th>Destinatari</th>
+                  <th>Utilizzo</th>
+                  <th>Stato</th>
+                  <th style={{ textAlign: 'right' }}>Azioni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {offers.map((o) => {
+                  const benefitText = o.discount_type === 'text'
+                    ? 'Promozione speciale'
+                    : formatOfferBenefit(
+                        o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
+                        o.discount_value ?? o.discount_percentage ?? 0
+                      );
+                  const isShared = o.target_audience === 'vantaggi_vip';
+
+                  return (
+                    <tr key={o.id}>
+                      <td>#{o.id}</td>
+                      <td>
+                        <strong>{o.title}</strong>
+                        {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
+                      </td>
+                      <td>
+                        <span className="badge badge-success">{benefitText}</span>
+                      </td>
+                      <td>
+                        {isShared ? (
+                          <span className="badge badge-secondary" title="Visibile anche ai clienti VIP">Vantaggi & VIP</span>
+                        ) : (
+                          <span className="badge badge-primary">Solo Vantaggi</span>
+                        )}
+                      </td>
+                      <td>
+                        <span style={{ fontSize: '0.85rem' }}>{o.is_single_use ? 'Monouso' : 'Illimitato'}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${o.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                          {o.status === 'active' ? 'Attivo' : 'Inattivo'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {canRedeem && o.status === 'active' && (
+                            <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(o)}>
+                              🏷️ Applica
+                            </Button>
+                          )}
+                          {canManage && (
+                            <>
+                              <Button variant="outline" size="sm" onClick={() => handleToggleStatus(o)}>
+                                {o.status === 'active' ? 'Disattiva' : 'Attiva'}
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => handleOpenEdit(o)}>
+                                Modifica
+                              </Button>
+                              <Button variant="danger" size="sm" onClick={() => setOfferToDelete(o)}>
+                                Elimina
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        isLoadingArchived ? (
+          <Spinner size="md" text="Caricamento archivio vantaggi..." />
+        ) : archivedOffers.length === 0 ? (
+          <EmptyState
+            title="Nessun contenuto archiviato"
+            description="I vantaggi eliminati che contengono storico di utilizzi vengono archiviati qui per consultazione."
+          />
+        ) : (
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Vantaggio</th>
+                  <th>Valore</th>
+                  <th>Destinatari</th>
+                  <th>Utilizzo</th>
+                  <th>Stato</th>
+                  <th style={{ textAlign: 'right' }}>Azioni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archivedOffers.map((o) => {
+                  const benefitText = o.discount_type === 'text'
+                    ? 'Promozione speciale'
+                    : formatOfferBenefit(
+                        o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
+                        o.discount_value ?? o.discount_percentage ?? 0
+                      );
+
+                  return (
+                    <tr key={o.id}>
+                      <td>#{o.id}</td>
+                      <td>
+                        <strong>{o.title}</strong>
+                        {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
+                      </td>
+                      <td>
+                        <span className="badge badge-success">{benefitText}</span>
+                      </td>
+                      <td>
+                        <span className="badge badge-primary">Vantaggi</span>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: '0.85rem' }}>{o.is_single_use ? 'Monouso' : 'Illimitato'}</span>
+                      </td>
+                      <td>
+                        <span className="badge badge-secondary">Archiviato</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {canManage && (
+                          <Button variant="secondary" size="sm" onClick={() => handleRestoreOffer(o)}>
+                            🔄 Ripristina
                           </Button>
                         )}
-                        {canManage && (
-                          <>
-                            <Button variant="outline" size="sm" onClick={() => handleOpenEdit(o)}>
-                              Modifica
-                            </Button>
-                            <Button variant="danger" size="sm" onClick={() => setOfferToDelete(o)}>
-                              Elimina
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
 
       {/* Modale Crea / Modifica */}
@@ -357,7 +511,7 @@ export const VantaggiPage: React.FC = () => {
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="es. Sconto 10% Spesa o Sconto Fisso 5€"
+            placeholder="es. Sconto 10% Spesa o Degustazione Omaggio"
           />
 
           <div className="form-group">
@@ -371,27 +525,30 @@ export const VantaggiPage: React.FC = () => {
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: discountType === 'text' ? '1fr' : '1fr 1fr', gap: '1rem' }}>
             <Select
               label="Tipo di Beneficio *"
               value={discountType}
-              onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+              onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed' | 'text')}
               options={[
                 { label: 'Sconto percentuale (%)', value: 'percentage' },
                 { label: 'Sconto fisso (€)', value: 'fixed' },
+                { label: 'Vantaggio libero / promozione testuale', value: 'text' },
               ]}
             />
 
-            <Input
-              label={discountType === 'percentage' ? 'Percentuale Sconto (%) *' : 'Importo Sconto (€) *'}
-              type="number"
-              step="0.01"
-              min="0.01"
-              max={discountType === 'percentage' ? '100' : undefined}
-              required
-              value={discountValueStr}
-              onChange={(e) => setDiscountValueStr(e.target.value)}
-            />
+            {discountType !== 'text' && (
+              <Input
+                label={discountType === 'percentage' ? 'Percentuale Sconto (%) *' : 'Importo Sconto (€) *'}
+                type="number"
+                step="0.01"
+                min="0.01"
+                max={discountType === 'percentage' ? '100' : undefined}
+                required
+                value={discountValueStr}
+                onChange={(e) => setDiscountValueStr(e.target.value)}
+              />
+            )}
           </div>
 
           {/* Condivisione con VIP: solo se il negozio ha VIP attivo */}

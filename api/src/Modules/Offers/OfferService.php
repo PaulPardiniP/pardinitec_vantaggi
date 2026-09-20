@@ -28,8 +28,11 @@ final class OfferService
         $this->capabilityService = $capabilityService ?? new CapabilityService($this->pdo);
     }
 
-    public static function formatBenefit(string $discountType, float $discountValue): string
+    public static function formatBenefit(string $discountType, ?float $discountValue): string
     {
+        if ($discountType === 'text' || $discountValue === null || $discountValue <= 0.0) {
+            return 'Promozione speciale';
+        }
         if ($discountType === 'percentage') {
             $valStr = rtrim(rtrim(number_format($discountValue, 2, ',', ''), '0'), ',');
             return "Sconto {$valStr}%";
@@ -91,26 +94,30 @@ final class OfferService
         }
         $discountType = $discountType ?? 'percentage';
 
-        if (!in_array($discountType, ['percentage', 'fixed'], true)) {
-            throw new InvalidArgumentException("Tipo sconto non valido: '{$discountType}'. Valori ammessi: 'percentage', 'fixed'.");
+        if (!in_array($discountType, ['percentage', 'fixed', 'text'], true)) {
+            throw new InvalidArgumentException("Tipo sconto non valido: '{$discountType}'. Valori ammessi: 'percentage', 'fixed', 'text'.");
         }
 
-        $rawVal = $data['discount_value'] ?? $data['discount_percentage'] ?? ($existing['discount_value'] ?? null);
-        if ($rawVal === null || !is_numeric($rawVal)) {
-            throw new InvalidArgumentException('Il valore dello sconto è obbligatorio e deve essere un numero valido.');
-        }
-        $discountValue = (float) $rawVal;
-
-        if ($discountType === 'percentage') {
-            if ($discountValue <= 0.0 || $discountValue > 100.0) {
-                throw new InvalidArgumentException('La percentuale di sconto deve essere compresa tra 0.01% e 100%.');
-            }
+        if ($discountType === 'text') {
+            $discountValue = null;
         } else {
-            if ($discountValue <= 0.0) {
-                throw new InvalidArgumentException('L\'importo fisso di sconto deve essere maggiore di zero.');
+            $rawVal = $data['discount_value'] ?? $data['discount_percentage'] ?? ($existing['discount_value'] ?? null);
+            if ($rawVal === null || !is_numeric($rawVal)) {
+                throw new InvalidArgumentException('Il valore dello sconto è obbligatorio e deve essere un numero valido.');
             }
+            $discountValue = (float) $rawVal;
+
+            if ($discountType === 'percentage') {
+                if ($discountValue <= 0.0 || $discountValue > 100.0) {
+                    throw new InvalidArgumentException('La percentuale di sconto deve essere compresa tra 0.01% e 100%.');
+                }
+            } else {
+                if ($discountValue <= 0.0) {
+                    throw new InvalidArgumentException('L\'importo fisso di sconto deve essere maggiore di zero.');
+                }
+            }
+            $discountValue = round($discountValue, 2);
         }
-        $discountValue = round($discountValue, 2);
 
         // 2. Segmentazione Destinatari (target_audience)
         // Ammessi: 'vantaggi', 'vip', 'vantaggi_vip' ('all' è accettato come alias per retrocompatibilità)
@@ -180,7 +187,7 @@ final class OfferService
             ? (bool) $data['is_single_use']
             : (bool) ($existing['is_single_use'] ?? true);
 
-        $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive', 'expired'], true)
+        $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive', 'expired', 'archived'], true)
             ? (string) $data['status']
             : ($existing['status'] ?? 'active');
 
@@ -298,13 +305,75 @@ final class OfferService
     }
 
     /**
-     * Disattiva un'offerta.
+     * Elimina definitivamente se priva di utilizzi storici, oppure archivia se ha relazioni storiche.
+     *
+     * @return array{action: 'deleted'|'archived', message: string}
      */
-    public function deleteOffer(int $businessId, int $offerId): bool
+    public function deleteOffer(int $businessId, int $offerId): array
     {
+        $existing = $this->getOffer($businessId, $offerId);
+        if (!$existing) {
+            throw new InvalidArgumentException('Offerta non trovata.');
+        }
+
+        $checkStmt = $this->pdo->prepare("
+            SELECT COUNT(*) FROM `offer_redemptions`
+            WHERE `offer_id` = :offer_id AND `business_id` = :business_id
+        ");
+        $checkStmt->execute([
+            'offer_id' => $offerId,
+            'business_id' => $businessId,
+        ]);
+        $redemptionsCount = (int) $checkStmt->fetchColumn();
+
+        if ($redemptionsCount === 0) {
+            $delStmt = $this->pdo->prepare("
+                DELETE FROM `offers`
+                WHERE `id` = :id AND `business_id` = :business_id
+            ");
+            $delStmt->execute([
+                'id' => $offerId,
+                'business_id' => $businessId,
+            ]);
+
+            return [
+                'action' => 'deleted',
+                'message' => 'Offerta eliminata definitivamente.',
+            ];
+        }
+
+        $archStmt = $this->pdo->prepare("
+            UPDATE `offers`
+            SET `status` = 'archived',
+                `updated_at` = UTC_TIMESTAMP()
+            WHERE `id` = :id AND `business_id` = :business_id
+        ");
+        $archStmt->execute([
+            'id' => $offerId,
+            'business_id' => $businessId,
+        ]);
+
+        return [
+            'action' => 'archived',
+            'message' => 'Offerta archiviata nei contenuti storici poiché contiene utilizzi registrati.',
+        ];
+    }
+
+    /**
+     * Ripristina un'offerta archiviata riportandola allo stato attivo.
+     *
+     * @return array<string, mixed>
+     */
+    public function restoreOffer(int $businessId, int $offerId): array
+    {
+        $existing = $this->getOffer($businessId, $offerId);
+        if (!$existing) {
+            throw new InvalidArgumentException('Offerta non trovata.');
+        }
+
         $stmt = $this->pdo->prepare("
             UPDATE `offers`
-            SET `status` = 'inactive',
+            SET `status` = 'active',
                 `updated_at` = UTC_TIMESTAMP()
             WHERE `id` = :id AND `business_id` = :business_id
         ");
@@ -313,7 +382,7 @@ final class OfferService
             'business_id' => $businessId,
         ]);
 
-        return $stmt->rowCount() > 0;
+        return $this->getOffer($businessId, $offerId) ?? [];
     }
 
     /**
@@ -347,7 +416,8 @@ final class OfferService
         bool $onlyActive = true,
         ?int $cardProfileId = null,
         ?string $capability = null,
-        ?string $targetAudience = null
+        ?string $targetAudience = null,
+        ?string $statusFilter = null
     ): array {
         $puntiId = $this->getProfileIdByCode('punti');
         $vantaggiId = $this->getProfileIdByCode('vantaggi');
@@ -365,6 +435,10 @@ final class OfferService
             $where[] = "o.`status` = 'active'";
             $where[] = "(o.`start_date` IS NULL OR o.`start_date` <= UTC_TIMESTAMP())";
             $where[] = "(o.`end_date` IS NULL OR o.`end_date` >= UTC_TIMESTAMP())";
+        } elseif ($statusFilter === 'archived') {
+            $where[] = "o.`status` = 'archived'";
+        } else {
+            $where[] = "o.`status` != 'archived'";
         }
 
         if ($targetAudience !== null) {
@@ -577,11 +651,17 @@ final class OfferService
 
     private function formatOffer(array $row): array
     {
-        $discountType = ($row['offer_type'] === 'discount' || ($row['required_capability'] ?? '') === 'discounts')
-            ? 'fixed'
-            : 'percentage';
-        $discountValue = $row['discount_percentage'] !== null ? (float) $row['discount_percentage'] : 0.0;
-        $formattedBenefit = self::formatBenefit($discountType, $discountValue);
+        if ($row['discount_percentage'] === null) {
+            $discountType = 'text';
+            $discountValue = null;
+            $formattedBenefit = 'Promozione speciale';
+        } else {
+            $discountType = ($row['offer_type'] === 'discount' || ($row['required_capability'] ?? '') === 'discounts')
+                ? 'fixed'
+                : 'percentage';
+            $discountValue = (float) $row['discount_percentage'];
+            $formattedBenefit = self::formatBenefit($discountType, $discountValue);
+        }
 
         $cardProfileId = $row['card_profile_id'] !== null ? (int) $row['card_profile_id'] : null;
         $vantaggiId = $this->getProfileIdByCode('vantaggi');

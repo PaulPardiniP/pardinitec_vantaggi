@@ -19,6 +19,10 @@ export const VipPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const [viewTab, setViewTab] = useState<'catalog' | 'archived'>('catalog');
+  const [archivedOffers, setArchivedOffers] = useState<Offer[]>([]);
+  const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+
   // Modale Crea / Modifica Beneficio VIP
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
@@ -65,9 +69,51 @@ export const VipPage: React.FC = () => {
     }
   };
 
+  const loadArchived = async () => {
+    if (!activeBusiness) return;
+    setIsLoadingArchived(true);
+    try {
+      const list = await offersApi.list(activeBusiness.id, false, undefined, 'archived');
+      const vipList = list.filter((o) => o.target_audience === 'vip' || o.is_vip);
+      setArchivedOffers(vipList);
+    } catch {
+      setArchivedOffers([]);
+    } finally {
+      setIsLoadingArchived(false);
+    }
+  };
+
   useEffect(() => {
     loadVipOffers();
+    loadArchived();
   }, [activeBusiness]);
+
+  const handleToggleStatus = async (o: Offer) => {
+    if (!activeBusiness) return;
+    const newStatus = o.status === 'active' ? 'inactive' : 'active';
+    try {
+      await offersApi.update(activeBusiness.id, o.id, { status: newStatus });
+      setFeedback({
+        type: 'success',
+        message: newStatus === 'active' ? `Beneficio "${o.title}" attivato con successo.` : `Beneficio "${o.title}" disattivato.`,
+      });
+      await loadVipOffers();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la modifica dello stato.' });
+    }
+  };
+
+  const handleRestoreOffer = async (o: Offer) => {
+    if (!activeBusiness) return;
+    try {
+      await offersApi.restore(activeBusiness.id, o.id);
+      setFeedback({ type: 'success', message: `Beneficio VIP "${o.title}" ripristinato con successo!` });
+      await loadVipOffers();
+      await loadArchived();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante il ripristino del beneficio VIP.' });
+    }
+  };
 
   const handleOpenCreate = () => {
     setEditingOffer(null);
@@ -122,7 +168,7 @@ export const VipPage: React.FC = () => {
         setFeedback({ type: 'success', message: 'Beneficio VIP aggiornato con successo.' });
       } else {
         await offersApi.create(activeBusiness.id, payload);
-        setFeedback({ type: 'success', message: 'Nuovo beneficio esclusivo VIP creato!' });
+        setFeedback({ type: 'success', message: 'Nuovo beneficio VIP creato con successo!' });
       }
 
       setIsFormOpen(false);
@@ -139,12 +185,18 @@ export const VipPage: React.FC = () => {
     setIsSubmitting(true);
     setFeedback(null);
     try {
-      await offersApi.delete(activeBusiness.id, offerToDelete.id);
-      setFeedback({ type: 'success', message: 'Beneficio disattivato con successo.' });
+      const res = await offersApi.delete(activeBusiness.id, offerToDelete.id);
+      setFeedback({
+        type: 'success',
+        message: res.action === 'deleted'
+          ? 'Beneficio VIP eliminato definitivamente.'
+          : 'Beneficio VIP archiviato nei contenuti storici poiché contiene utilizzi registrati.',
+      });
       setOfferToDelete(null);
       await loadVipOffers();
+      await loadArchived();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante la disattivazione.' });
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'eliminazione.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -249,84 +301,176 @@ export const VipPage: React.FC = () => {
         </div>
       )}
 
-      {/* Sezione Benefici Esclusivi VIP */}
-      <div className="card" style={{ marginBottom: '2rem', borderLeft: '4px solid var(--color-vip, #d97706)' }}>
-        <h2 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span>👑</span> Benefici Riservati Esclusivamente ai VIP
-        </h2>
-        <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
-          Offerte e condizioni speciali accessibili esclusivamente dai titolari di tessera VIP.
-        </p>
+      {/* Tabs Viste: Catalogo vs Archiviati */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem' }}>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'catalog' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setViewTab('catalog')}
+        >
+          👑 Benefici VIP ({exclusiveOffers.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'archived' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => {
+            setViewTab('archived');
+            loadArchived();
+          }}
+        >
+          📦 Contenuti archiviati ({archivedOffers.length})
+        </button>
+      </div>
 
-        {exclusiveOffers.length === 0 ? (
-          <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', background: '#fafafa', borderRadius: 'var(--radius-md)' }}>
-            Nessun beneficio esclusivo VIP configurato al momento.
+      {viewTab === 'catalog' ? (
+        <>
+          {/* Sezione Benefici Esclusivi VIP */}
+          <div className="card" style={{ marginBottom: '2rem', borderLeft: '4px solid var(--color-vip, #d97706)' }}>
+            <h2 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>👑</span> Benefici Riservati Esclusivamente ai VIP
+            </h2>
+            <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
+              Offerte e condizioni speciali accessibili esclusivamente dai titolari di tessera VIP.
+            </p>
+
+            {exclusiveOffers.length === 0 ? (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', background: '#fafafa', borderRadius: 'var(--radius-md)' }}>
+                Nessun beneficio esclusivo VIP configurato al momento.
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Beneficio VIP</th>
+                      <th>Valore</th>
+                      <th>Utilizzo</th>
+                      <th>Stato</th>
+                      <th style={{ textAlign: 'right' }}>Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exclusiveOffers.map((o) => {
+                      const benefitText = o.discount_type === 'text'
+                        ? 'Promozione speciale'
+                        : formatOfferBenefit(
+                            o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
+                            o.discount_value ?? o.discount_percentage ?? 0
+                          );
+
+                      return (
+                        <tr key={o.id}>
+                          <td>#{o.id}</td>
+                          <td>
+                            <strong>{o.title}</strong>
+                            {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
+                          </td>
+                          <td>
+                            <span className="badge badge-success">{benefitText}</span>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: '0.85rem' }}>{o.is_single_use ? 'Monouso' : 'Illimitato'}</span>
+                          </td>
+                          <td>
+                            <span className={`badge ${o.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                              {o.status === 'active' ? 'Attivo' : 'Inattivo'}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div style={{ display: 'inline-flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              {canRedeem && o.status === 'active' && (
+                                <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(o)}>
+                                  👑 Applica
+                                </Button>
+                              )}
+                              {canManage && (
+                                <>
+                                  <Button variant="outline" size="sm" onClick={() => handleToggleStatus(o)}>
+                                    {o.status === 'active' ? 'Disattiva' : 'Attiva'}
+                                  </Button>
+                                  <Button variant="outline" size="sm" onClick={() => handleOpenEdit(o)}>
+                                    Modifica
+                                  </Button>
+                                  <Button variant="danger" size="sm" onClick={() => setOfferToDelete(o)}>
+                                    Elimina
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="table-responsive">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Beneficio VIP</th>
-                  <th>Valore</th>
-                  <th>Utilizzo</th>
-                  <th>Stato</th>
-                  <th style={{ textAlign: 'right' }}>Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {exclusiveOffers.map((o) => {
-                  const benefitText = formatOfferBenefit(
-                    o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
-                    o.discount_value ?? o.discount_percentage ?? 0
-                  );
+        </>
+      ) : (
+        <div className="card" style={{ marginBottom: '2rem' }}>
+          <h2 className="card-title">Contenuti Archiviati (VIP)</h2>
+          {isLoadingArchived ? (
+            <Spinner size="md" text="Caricamento archivio VIP..." />
+          ) : archivedOffers.length === 0 ? (
+            <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              Nessun beneficio VIP archiviato.
+            </div>
+          ) : (
+            <div className="table-responsive">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Beneficio VIP</th>
+                    <th>Valore</th>
+                    <th>Destinatari</th>
+                    <th>Stato</th>
+                    <th style={{ textAlign: 'right' }}>Azioni</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archivedOffers.map((o) => {
+                    const benefitText = o.discount_type === 'text'
+                      ? 'Promozione speciale'
+                      : formatOfferBenefit(
+                          o.discount_type === 'fixed' || o.offer_type === 'discount' ? 'fixed' : 'percentage',
+                          o.discount_value ?? o.discount_percentage ?? 0
+                        );
 
-                  return (
-                    <tr key={o.id}>
-                      <td>#{o.id}</td>
-                      <td>
-                        <strong>{o.title}</strong>
-                        {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
-                      </td>
-                      <td>
-                        <span className="badge badge-success">{benefitText}</span>
-                      </td>
-                      <td>
-                        <span style={{ fontSize: '0.85rem' }}>{o.is_single_use ? 'Monouso' : 'Illimitato'}</span>
-                      </td>
-                      <td>
-                        <span className={`badge ${o.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                          {o.status}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
-                          {canRedeem && (
-                            <Button variant="secondary" size="sm" onClick={() => handleOpenRedeem(o)}>
-                              👑 Applica
+                    return (
+                      <tr key={o.id}>
+                        <td>#{o.id}</td>
+                        <td>
+                          <strong>{o.title}</strong>
+                          {o.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{o.description}</div>}
+                        </td>
+                        <td>
+                          <span className="badge badge-success">{benefitText}</span>
+                        </td>
+                        <td>
+                          <span className="badge badge-primary">VIP</span>
+                        </td>
+                        <td>
+                          <span className="badge badge-secondary">Archiviato</span>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {canManage && (
+                            <Button variant="secondary" size="sm" onClick={() => handleRestoreOffer(o)}>
+                              🔄 Ripristina
                             </Button>
                           )}
-                          {canManage && (
-                            <>
-                              <Button variant="outline" size="sm" onClick={() => handleOpenEdit(o)}>
-                                Modifica
-                              </Button>
-                              <Button variant="danger" size="sm" onClick={() => setOfferToDelete(o)}>
-                                Elimina
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sezione Benefici Condivisi con Vantaggi */}
       {sharedOffers.length > 0 && (

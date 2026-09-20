@@ -71,7 +71,14 @@ final class RewardController
 
             $onlyActive = $request->getQuery('all') !== '1';
             $profile = $request->getQuery('profile');
-            $rewards = $this->rewardService->listRewards($businessId, $onlyActive, null, $profile ? (string) $profile : null);
+            $status = $request->getQuery('status');
+            $rewards = $this->rewardService->listRewards(
+                $businessId,
+                $onlyActive,
+                null,
+                $profile ? (string) $profile : null,
+                $status ? (string) $status : null
+            );
 
             Response::success('Catalogo premi recuperato.', [
                 'data' => $rewards,
@@ -175,13 +182,43 @@ final class RewardController
         try {
             $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::SETTINGS_MANAGE);
 
-            $this->rewardService->deleteReward($businessId, $rewardId);
+            $result = $this->rewardService->deleteReward($businessId, $rewardId);
+            $msg = $result['action'] === 'deleted'
+                ? 'Premio eliminato definitivamente.'
+                : 'Premio archiviato nei contenuti storici.';
 
-            Response::success('Premio disattivato correttamente.', [], 200);
+            Response::success($msg, $result, 200);
         } catch (ForbiddenException $e) {
             Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
         } catch (Throwable $e) {
-            Response::error('Errore durante la disattivazione del premio.', 500);
+            Response::error('Errore durante la cancellazione del premio.', 500);
+        }
+    }
+
+    /**
+     * POST /api/v1/businesses/{id}/rewards/{rewardId}/restore
+     */
+    public function restore(Request $request, int $businessId, int $rewardId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->authzService->requirePermission((int) $session['user_id'], $businessId, Permission::SETTINGS_MANAGE);
+
+            $reward = $this->rewardService->restoreReward($businessId, $rewardId);
+
+            Response::success('Premio ripristinato con successo.', [
+                'data' => $reward,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il ripristino del premio.', 500);
         }
     }
 

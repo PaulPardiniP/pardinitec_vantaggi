@@ -30,18 +30,22 @@ export const PointsPage: React.FC = () => {
   const [selectedAccount, setSelectedAccount] = useState<LoyaltyAccount | null>(null);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
 
-  // Modalità Operazione: 'purchase' (da scontrino) | 'manual' (rettifica manuale)
-  const [operationMode, setOperationMode] = useState<'purchase' | 'manual'>('purchase');
+  // Modalità Accredito: 'quick' (predefinito: +1, +5, +10, Altro) | 'receipt' (calcola da scontrino)
+  const [creditMode, setCreditMode] = useState<'quick' | 'receipt'>('quick');
 
-  // Input Accredito da Spesa
+  // Input Accredito Rapido - Altro importo
+  const [showCustomQuickInput, setShowCustomQuickInput] = useState(false);
+  const [customQuickPoints, setCustomQuickPoints] = useState<string>('20');
+
+  // Input Accredito da Spesa (Scontrino)
   const [spentAmount, setSpentAmount] = useState('');
   const [calculatedPoints, setCalculatedPoints] = useState<number | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [calcError, setCalcError] = useState<string | null>(null);
 
-  // Input Rettifica Manuale
-  const [manualPoints, setManualPoints] = useState<number>(10);
-  const [manualReason, setManualReason] = useState('Rettifica manuale');
+  // Input Sezione Separata: Rettifica Saldo Punti
+  const [manualPoints, setManualPoints] = useState<number>(-5);
+  const [manualReason, setManualReason] = useState('Correzione errore scontrino');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -147,11 +151,12 @@ export const PointsPage: React.FC = () => {
     setSpentAmount('');
     setCalculatedPoints(null);
     setCalcError(null);
+    setShowCustomQuickInput(false);
   };
 
-  // Calcolo Punti Live da Spesa
+  // Calcolo Punti Live da Spesa (Modalità Scontrino)
   useEffect(() => {
-    if (!activeBusiness || operationMode !== 'purchase') return;
+    if (!activeBusiness || creditMode !== 'receipt') return;
     const amountVal = parseFloat(spentAmount);
     if (isNaN(amountVal) || amountVal <= 0) {
       setCalculatedPoints(null);
@@ -183,37 +188,47 @@ export const PointsPage: React.FC = () => {
       cancel = true;
       clearTimeout(timer);
     };
-  }, [spentAmount, activeBusiness, operationMode]);
+  }, [spentAmount, activeBusiness, creditMode]);
 
-  // Invio Accredito / Rettifica
-  const handleSubmit = async (e: React.FormEvent) => {
+  // 1. Accredito Rapido con 1 Clic (+1, +5, +10)
+  const handleQuickCredit = async (pts: number) => {
+    if (!activeBusiness || !selectedAccount) return;
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const res = await pointsApi.adjust(activeBusiness.id, selectedAccount.id, {
+        points: pts,
+        reason: 'Accredito rapido punti',
+        operation_id: generateOperationId(),
+      });
+
+      const newBalance = res.new_balance !== undefined ? res.new_balance : res.balance;
+      setFeedback({
+        type: 'success',
+        message: res.idempotent
+          ? 'Operazione già registrata in precedenza.'
+          : `+${pts} punti accreditati con successo a ${selectedCustomer?.first_name}! Nuovo saldo: ${newBalance} pt.`,
+      });
+
+      setSelectedAccount((prev) => (prev ? { ...prev, balance: newBalance } : null));
+      loadTransactions(1);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'accredito rapido dei punti.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 2. Accredito Rapido: Altro Importo
+  const handleCustomQuickSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeBusiness || !selectedAccount) return;
 
-    let pointsToApply = 0;
-    let reasonText = '';
-    let spentVal: number | undefined = undefined;
-
-    if (operationMode === 'purchase') {
-      const amountVal = parseFloat(spentAmount);
-      if (isNaN(amountVal) || amountVal <= 0) {
-        setFeedback({ type: 'error', message: 'Inserisci un importo di spesa valido maggiore di zero.' });
-        return;
-      }
-      if (calculatedPoints === null || calculatedPoints < 0) {
-        setFeedback({ type: 'error', message: 'Impossibile determinare i punti per questa spesa.' });
-        return;
-      }
-      pointsToApply = calculatedPoints;
-      spentVal = amountVal;
-      reasonText = `Acquisto in negozio per €${amountVal.toFixed(2)}`;
-    } else {
-      pointsToApply = Number(manualPoints);
-      if (isNaN(pointsToApply) || pointsToApply === 0) {
-        setFeedback({ type: 'error', message: 'Inserisci un numero di punti valido diverso da zero.' });
-        return;
-      }
-      reasonText = manualReason.trim() || 'Rettifica manuale punti';
+    const pts = parseInt(customQuickPoints, 10);
+    if (isNaN(pts) || pts <= 0) {
+      setFeedback({ type: 'error', message: 'Inserisci un numero positivo di punti.' });
+      return;
     }
 
     setIsSubmitting(true);
@@ -221,31 +236,111 @@ export const PointsPage: React.FC = () => {
 
     try {
       const res = await pointsApi.adjust(activeBusiness.id, selectedAccount.id, {
-        points: pointsToApply,
-        reason: reasonText,
+        points: pts,
+        reason: 'Accredito rapido punti (importo personalizzato)',
         operation_id: generateOperationId(),
-        spent_amount: spentVal,
       });
 
-      const newBalance = res.new_balance;
+      const newBalance = res.new_balance !== undefined ? res.new_balance : res.balance;
       setFeedback({
         type: 'success',
         message: res.idempotent
           ? 'Operazione già registrata in precedenza.'
-          : `Operazione completata con successo! Nuovo saldo per ${selectedCustomer?.first_name}: ${newBalance} punti.`,
+          : `+${pts} punti accreditati con successo a ${selectedCustomer?.first_name}! Nuovo saldo: ${newBalance} pt.`,
       });
 
-      // Aggiorna localmente il saldo del conto
       setSelectedAccount((prev) => (prev ? { ...prev, balance: newBalance } : null));
-
-      // Reset form spesa
-      setSpentAmount('');
-      setCalculatedPoints(null);
-
-      // Ricarica storico transazioni
+      setShowCustomQuickInput(false);
       loadTransactions(1);
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'aggiornamento dei punti.' });
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'accredito dei punti.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 3. Accredito da Scontrino (Calcola da scontrino)
+  const handleReceiptSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness || !selectedAccount) return;
+
+    const amountVal = parseFloat(spentAmount);
+    if (isNaN(amountVal) || amountVal <= 0) {
+      setFeedback({ type: 'error', message: 'Inserisci un importo di spesa valido maggiore di zero.' });
+      return;
+    }
+    if (calculatedPoints === null || calculatedPoints <= 0) {
+      setFeedback({ type: 'error', message: 'Impossibile determinare i punti per questa spesa.' });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const res = await pointsApi.adjust(activeBusiness.id, selectedAccount.id, {
+        points: calculatedPoints,
+        reason: `Acquisto in negozio per €${amountVal.toFixed(2)}`,
+        operation_id: generateOperationId(),
+        spent_amount: amountVal,
+      });
+
+      const newBalance = res.new_balance !== undefined ? res.new_balance : res.balance;
+      setFeedback({
+        type: 'success',
+        message: res.idempotent
+          ? 'Operazione già registrata in precedenza.'
+          : `+${calculatedPoints} punti accreditati con successo per una spesa di €${amountVal.toFixed(2)}! Nuovo saldo: ${newBalance} pt.`,
+      });
+
+      setSelectedAccount((prev) => (prev ? { ...prev, balance: newBalance } : null));
+      setSpentAmount('');
+      setCalculatedPoints(null);
+      loadTransactions(1);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'accredito dei punti da spesa.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 4. Sezione Separata: Rettifica Saldo Punti
+  const handleCorrectionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness || !selectedAccount) return;
+
+    const delta = Number(manualPoints);
+    if (isNaN(delta) || delta === 0) {
+      setFeedback({ type: 'error', message: 'Inserisci una variazione punti valida e diversa da zero.' });
+      return;
+    }
+    if (!manualReason.trim()) {
+      setFeedback({ type: 'error', message: 'La causale per la rettifica punti è obbligatoria.' });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const res = await pointsApi.adjust(activeBusiness.id, selectedAccount.id, {
+        points: delta,
+        reason: manualReason.trim(),
+        operation_id: generateOperationId(),
+      });
+
+      const newBalance = res.new_balance !== undefined ? res.new_balance : res.balance;
+      setFeedback({
+        type: 'success',
+        message: res.idempotent
+          ? 'Operazione già registrata in precedenza.'
+          : `Rettifica di ${delta >= 0 ? '+' + delta : delta} punti registrata con successo! Nuovo saldo: ${newBalance} pt.`,
+      });
+
+      setSelectedAccount((prev) => (prev ? { ...prev, balance: newBalance } : null));
+      loadTransactions(1);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la rettifica punti.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -263,11 +358,8 @@ export const PointsPage: React.FC = () => {
   }
 
   const currentBalance = selectedAccount?.balance ?? 0;
-  const previewDelta =
-    operationMode === 'purchase'
-      ? (calculatedPoints ?? 0)
-      : (manualPoints || 0);
-  const previewNewBalance = Math.max(0, currentBalance + previewDelta);
+  const previewReceiptNewBalance = Math.max(0, currentBalance + (calculatedPoints ?? 0));
+  const previewCorrectionNewBalance = Math.max(0, currentBalance + (manualPoints || 0));
   const programLabel = program ? (program.mode === 'points_per_amount' ? `${program.points_ratio} pt per 1€` : program.mode === 'fixed_per_purchase' ? `${program.fixed_points} pt a scontrino` : 'Accredito manuale') : null;
 
   return (
@@ -399,119 +491,210 @@ export const PointsPage: React.FC = () => {
         )}
       </div>
 
-      {/* SEZIONE 2: Calcolo & Assegnazione Punti */}
+      {/* SEZIONE 2: Accredito Punti */}
       {selectedCustomer && selectedAccount && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>
-          <h2 className="card-title">2. Dettaglio operazione punti</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div>
+              <h2 className="card-title" style={{ margin: 0 }}>2. Accredito punti</h2>
+              <p className="page-subtitle" style={{ margin: '0.25rem 0 0 0' }}>
+                Assegna punti rapidamente con un tocco oppure calcola l'accredito dall'importo scontrino.
+              </p>
+            </div>
 
-          {/* Toggle Modalità */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-            <button
-              type="button"
-              className={`btn btn-sm ${operationMode === 'purchase' ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setOperationMode('purchase')}
-            >
-              🛒 Accredito da scontrino spesa
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${operationMode === 'manual' ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setOperationMode('manual')}
-            >
-              ⚙️ Rettifica manuale punti
-            </button>
+            {/* Toggle Modalità Accredito: Rapido (predefinito) vs Calcola da scontrino (secondario) */}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${creditMode === 'quick' ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setCreditMode('quick')}
+              >
+                ⚡ Accredito rapido
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${creditMode === 'receipt' ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setCreditMode('receipt')}
+              >
+                🛒 Calcola da scontrino
+              </button>
+            </div>
           </div>
 
           {!canAdjust ? (
-            <Alert type="warning" message="Non disponi del permesso necessario (points.adjust) per assegnare o stornare punti." />
-          ) : (
-            <form onSubmit={handleSubmit}>
-              {operationMode === 'purchase' ? (
-                <div>
-                  <div style={{ maxWidth: '320px', marginBottom: '1rem' }}>
-                    <Input
-                      label="Importo Scontrino (€) *"
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      placeholder="es. 25.50"
-                      value={spentAmount}
-                      onChange={(e) => setSpentAmount(e.target.value)}
-                      autoFocus
-                    />
+            <Alert type="warning" message="Non disponi del permesso necessario (points.adjust) per accreditare punti." />
+          ) : creditMode === 'quick' ? (
+            <div>
+              {/* Bottoni Tattili Rapidi Predefiniti */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '1rem 0.5rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow-sm)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  disabled={isSubmitting}
+                  onClick={() => handleQuickCredit(1)}
+                >
+                  +1 pt
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '1rem 0.5rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow-sm)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  disabled={isSubmitting}
+                  onClick={() => handleQuickCredit(5)}
+                >
+                  +5 pt
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '1rem 0.5rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow-sm)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  disabled={isSubmitting}
+                  onClick={() => handleQuickCredit(10)}
+                >
+                  +10 pt
+                </button>
+
+                <button
+                  type="button"
+                  className={`btn btn-touch ${showCustomQuickInput ? 'btn-primary' : 'btn-outline'}`}
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '1rem',
+                    padding: '1rem 0.5rem',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                  disabled={isSubmitting}
+                  onClick={() => setShowCustomQuickInput(!showCustomQuickInput)}
+                >
+                  ✍️ Altro importo
+                </button>
+              </div>
+
+              {/* Form Espandibile per "Altro importo" */}
+              {showCustomQuickInput && (
+                <form
+                  onSubmit={handleCustomQuickSubmit}
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '1rem',
+                    marginBottom: '0.5rem',
+                  }}
+                >
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Quantità di punti da accreditare:
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ maxWidth: '160px' }}>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={customQuickPoints}
+                        onChange={(e) => setCustomQuickPoints(e.target.value)}
+                        autoFocus
+                        style={{ margin: 0 }}
+                      />
+                    </div>
+                    <Button type="submit" variant="primary" isLoading={isSubmitting}>
+                      ✓ Accredita {customQuickPoints || 0} punti
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => setShowCustomQuickInput(false)}>
+                      Annulla
+                    </Button>
                   </div>
+                </form>
+              )}
+            </div>
+          ) : (
+            /* Modalità Secondaria: Calcola da scontrino */
+            <form onSubmit={handleReceiptSubmit}>
+              <div style={{ maxWidth: '320px', marginBottom: '1rem' }}>
+                <Input
+                  label="Importo Scontrino (€) *"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="es. 25.50"
+                  value={spentAmount}
+                  onChange={(e) => setSpentAmount(e.target.value)}
+                  autoFocus
+                />
+              </div>
 
-                  {calcError && (
-                    <div style={{ marginBottom: '1rem' }}>
-                      {isOwnerOrManager ? (
-                        <div style={{ padding: '0.85rem', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 'var(--radius-md)' }}>
-                          <p style={{ margin: '0 0 0.5rem 0', color: '#92400e', fontSize: '0.9rem' }}>
-                            Configura prima la regola di calcolo punti nelle Impostazioni.
-                          </p>
-                          <Link to="/dashboard/settings" className="btn btn-outline btn-sm">
-                            ⚙️ Vai alle Impostazioni
-                          </Link>
-                        </div>
-                      ) : (
-                        <Alert
-                          type="warning"
-                          message="La regola di calcolo punti non è ancora configurata. Contatta il titolare o un responsabile."
-                        />
-                      )}
+              {calcError && (
+                <div style={{ marginBottom: '1rem' }}>
+                  {isOwnerOrManager ? (
+                    <div style={{ padding: '0.85rem', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 'var(--radius-md)' }}>
+                      <p style={{ margin: '0 0 0.5rem 0', color: '#92400e', fontSize: '0.9rem' }}>
+                        Configura prima la regola di calcolo punti nelle Impostazioni.
+                      </p>
+                      <Link to="/dashboard/settings" className="btn btn-outline btn-sm">
+                        ⚙️ Vai alle Impostazioni
+                      </Link>
                     </div>
-                  )}
-
-                  {isCalculating && <div style={{ marginBottom: '1rem' }}><Spinner size="sm" text="Calcolo punti in corso..." /></div>}
-
-                  {calculatedPoints !== null && !calcError && (
-                    <div style={{ background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.5rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Punti da accreditare:</div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-success)' }}>
-                          +{calculatedPoints} pt
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Nuovo saldo risultante:</div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>
-                          {previewNewBalance} pt
-                        </div>
-                      </div>
-                    </div>
+                  ) : (
+                    <Alert
+                      type="warning"
+                      message="La regola di calcolo punti non è ancora configurata. Contatta il titolare o un responsabile."
+                    />
                   )}
                 </div>
-              ) : (
-                <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-                    <Input
-                      label="Variazione Punti (+ per accredito, - per storno) *"
-                      type="number"
-                      required
-                      value={manualPoints}
-                      onChange={(e) => setManualPoints(parseInt(e.target.value, 10) || 0)}
-                      autoFocus
-                    />
-                    <Input
-                      label="Causale operazione *"
-                      required
-                      value={manualReason}
-                      onChange={(e) => setManualReason(e.target.value)}
-                    />
-                  </div>
+              )}
 
-                  <div style={{ background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.5rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                    <div>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Variazione:</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: manualPoints >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {manualPoints >= 0 ? `+${manualPoints}` : manualPoints} pt
-                      </div>
+              {isCalculating && <div style={{ marginBottom: '1rem' }}><Spinner size="sm" text="Calcolo punti in corso..." /></div>}
+
+              {calculatedPoints !== null && !calcError && (
+                <div style={{ background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.25rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Punti da accreditare:</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-success)' }}>
+                      +{calculatedPoints} pt
                     </div>
-                    <div>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Nuovo saldo risultante:</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>
-                        {previewNewBalance} pt
-                      </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Nuovo saldo risultante:</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>
+                      {previewReceiptNewBalance} pt
                     </div>
                   </div>
                 </div>
@@ -522,16 +705,74 @@ export const PointsPage: React.FC = () => {
                 variant="primary"
                 size="lg"
                 isLoading={isSubmitting}
-                disabled={operationMode === 'purchase' && (calculatedPoints === null || Boolean(calcError))}
+                disabled={calculatedPoints === null || calculatedPoints <= 0 || Boolean(calcError)}
               >
-                ✓ Conferma operazione punti
+                ✓ Accredita punti da scontrino
               </Button>
             </form>
           )}
         </div>
       )}
 
-      {/* SEZIONE 3: Storico Movimenti Negozio */}
+      {/* SEZIONE 3: Rettifica Punti (Sezione Separata) */}
+      {selectedCustomer && selectedAccount && (
+        <div className="card" style={{ marginBottom: '1.5rem' }}>
+          <h2 className="card-title">3. Rettifica saldo punti (Correzioni e storni)</h2>
+          <p className="page-subtitle">
+            Sezione separata riservata a rettifiche speciali, storni o correzioni di errori di cassa con causale obbligatoria.
+          </p>
+
+          {!canAdjust ? (
+            <Alert type="warning" message="Non disponi del permesso necessario (points.adjust) per effettuare rettifiche." />
+          ) : (
+            <form onSubmit={handleCorrectionSubmit}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+                <Input
+                  label="Variazione Punti (+ per accredito, - per storno) *"
+                  type="number"
+                  required
+                  value={manualPoints}
+                  onChange={(e) => setManualPoints(parseInt(e.target.value, 10) || 0)}
+                />
+                <Input
+                  label="Causale operazione *"
+                  required
+                  value={manualReason}
+                  onChange={(e) => setManualReason(e.target.value)}
+                  placeholder="es. Correzione errore scontrino o reso merce"
+                />
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.25rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Variazione:</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: manualPoints >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                    {manualPoints >= 0 ? `+${manualPoints}` : manualPoints} pt
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Nuovo saldo risultante:</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>
+                    {previewCorrectionNewBalance} pt
+                  </div>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                variant="secondary"
+                size="md"
+                isLoading={isSubmitting}
+                disabled={manualPoints === 0 || !manualReason.trim()}
+              >
+                ⚙️ Conferma rettifica punti
+              </Button>
+            </form>
+          )}
+        </div>
+      )}
+
+      {/* SEZIONE 4: Storico Movimenti Negozio */}
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <div>

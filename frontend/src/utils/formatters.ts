@@ -6,7 +6,11 @@
  * - Importo fisso 40 -> "Sconto €40,00"
  * - Importo fisso 5 -> "Sconto €5,00"
  */
-export const formatOfferBenefit = (discountType: 'percentage' | 'fixed' | string, discountValue: number): string => {
+export const formatOfferBenefit = (discountType: 'percentage' | 'fixed' | 'text' | string, discountValue?: number | null): string => {
+  if (discountType === 'text') {
+    return 'Vantaggio libero';
+  }
+
   if (discountValue === undefined || discountValue === null || isNaN(discountValue) || discountValue <= 0) {
     return '';
   }

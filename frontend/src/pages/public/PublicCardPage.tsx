@@ -56,9 +56,18 @@ export const PublicCardPage: React.FC = () => {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchCard = async () => {
+  // Stato Pannello Operativo In-Card (Esercente: +1, +5, +10, Altro importo, Da acquisto)
+  const [isSubmittingQuickCredit, setIsSubmittingQuickCredit] = useState(false);
+  const [quickCreditActiveTab, setQuickCreditActiveTab] = useState<'custom' | 'receipt' | null>(null);
+  const [quickCustomPoints, setQuickCustomPoints] = useState<string>('20');
+  const [quickReceiptAmount, setQuickReceiptAmount] = useState<string>('');
+  const [quickReceiptCalculatedPoints, setQuickReceiptCalculatedPoints] = useState<number | null>(null);
+  const [isCalculatingQuickReceipt, setIsCalculatingQuickReceipt] = useState(false);
+  const [quickReceiptCalcError, setQuickReceiptCalcError] = useState<string | null>(null);
+
+  const fetchCard = async (silent = false) => {
     if (!token) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     setError(null);
     try {
       const data = await publicCardApi.resolve(token);
@@ -71,7 +80,7 @@ export const PublicCardPage: React.FC = () => {
         setError('Impossibile caricare le informazioni della carta.');
       }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
@@ -79,7 +88,181 @@ export const PublicCardPage: React.FC = () => {
     fetchCard();
   }, [token]);
 
-  // Calcolo punti in anteprima per importo spesa
+  // Calcolo punti live per pannello scontrino operatore
+  useEffect(() => {
+    if (quickCreditActiveTab !== 'receipt' || !cardData?.business?.id) {
+      setQuickReceiptCalculatedPoints(null);
+      setQuickReceiptCalcError(null);
+      return;
+    }
+    const amt = parseFloat(quickReceiptAmount);
+    if (isNaN(amt) || amt <= 0) {
+      setQuickReceiptCalculatedPoints(null);
+      setQuickReceiptCalcError(null);
+      return;
+    }
+
+    let cancel = false;
+    const timer = setTimeout(async () => {
+      const bizId = cardData?.business?.id;
+      if (!bizId) return;
+      setIsCalculatingQuickReceipt(true);
+      setQuickReceiptCalcError(null);
+      try {
+        const res = await pointsApi.calculate(bizId, amt);
+        if (!cancel) {
+          const pts = res.calculated_points ?? res.points ?? 0;
+          setQuickReceiptCalculatedPoints(pts);
+        }
+      } catch (err: any) {
+        if (!cancel) {
+          setQuickReceiptCalculatedPoints(null);
+          setQuickReceiptCalcError(err.message || 'Regola di calcolo non disponibile.');
+        }
+      } finally {
+        if (!cancel) setIsCalculatingQuickReceipt(false);
+      }
+    }, 250);
+
+    return () => {
+      cancel = true;
+      clearTimeout(timer);
+    };
+  }, [quickReceiptAmount, quickCreditActiveTab, cardData?.business?.id]);
+
+  // Accredito rapido 1-clic (+1, +5, +10) al banco
+  const handleQuickCredit = async (pts: number) => {
+    if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    setIsSubmittingQuickCredit(true);
+    setFeedback(null);
+    try {
+      const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
+        points: pts,
+        reason: 'Accredito rapido in cassa',
+        operation_id: generateOperationId(),
+      });
+      const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
+      // Aggiornamento immediato dello stato locale senza ricaricare la pagina
+      setCardData((prev) => {
+        if (!prev || !prev.loyalty_account) return prev;
+        return {
+          ...prev,
+          loyalty_account: {
+            ...prev.loyalty_account,
+            balance: newBal,
+          },
+        };
+      });
+      setFeedback({
+        type: 'success',
+        message: `+${pts} punti accreditati con successo! Nuovo saldo: ${newBal} pt.`,
+      });
+      fetchCard(true);
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Errore durante l\'accredito dei punti.',
+      });
+    } finally {
+      setIsSubmittingQuickCredit(false);
+    }
+  };
+
+  // Accredito "Altro importo" al banco
+  const handleQuickCustomSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    const pts = parseInt(quickCustomPoints, 10);
+    if (isNaN(pts) || pts <= 0) {
+      setFeedback({ type: 'error', message: 'Inserisci un numero positivo di punti.' });
+      return;
+    }
+    setIsSubmittingQuickCredit(true);
+    setFeedback(null);
+    try {
+      const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
+        points: pts,
+        reason: 'Accredito punti in cassa (importo manuale)',
+        operation_id: generateOperationId(),
+      });
+      const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
+      setCardData((prev) => {
+        if (!prev || !prev.loyalty_account) return prev;
+        return {
+          ...prev,
+          loyalty_account: {
+            ...prev.loyalty_account,
+            balance: newBal,
+          },
+        };
+      });
+      setFeedback({
+        type: 'success',
+        message: `+${pts} punti accreditati con successo! Nuovo saldo: ${newBal} pt.`,
+      });
+      setQuickCreditActiveTab(null);
+      fetchCard(true);
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Errore durante l\'accredito dei punti.',
+      });
+    } finally {
+      setIsSubmittingQuickCredit(false);
+    }
+  };
+
+  // Accredito "Da acquisto" (scontrino) al banco
+  const handleQuickReceiptSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    const amt = parseFloat(quickReceiptAmount);
+    if (isNaN(amt) || amt <= 0) {
+      setFeedback({ type: 'error', message: 'Inserisci un totale spesa valido maggiore di zero.' });
+      return;
+    }
+    if (quickReceiptCalculatedPoints === null || quickReceiptCalculatedPoints <= 0) {
+      setFeedback({ type: 'error', message: 'Impossibile calcolare i punti per questo importo.' });
+      return;
+    }
+    setIsSubmittingQuickCredit(true);
+    setFeedback(null);
+    try {
+      const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
+        points: quickReceiptCalculatedPoints,
+        reason: `Acquisto in cassa per €${amt.toFixed(2)}`,
+        operation_id: generateOperationId(),
+        spent_amount: amt,
+      });
+      const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
+      setCardData((prev) => {
+        if (!prev || !prev.loyalty_account) return prev;
+        return {
+          ...prev,
+          loyalty_account: {
+            ...prev.loyalty_account,
+            balance: newBal,
+          },
+        };
+      });
+      setFeedback({
+        type: 'success',
+        message: `+${quickReceiptCalculatedPoints} punti accreditati per una spesa di €${amt.toFixed(2)}! Nuovo saldo: ${newBal} pt.`,
+      });
+      setQuickReceiptAmount('');
+      setQuickCreditActiveTab(null);
+      fetchCard(true);
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Errore durante l\'accredito dei punti da scontrino.',
+      });
+    } finally {
+      setIsSubmittingQuickCredit(false);
+    }
+  };
+
+  // Calcolo punti in anteprima per importo spesa (modale gestione punti)
   const handleCalculatePoints = async () => {
     const amt = parseFloat(calcAmount);
     if (isNaN(amt) || amt <= 0 || !cardData?.business?.id) return;
@@ -449,29 +632,255 @@ export const PublicCardPage: React.FC = () => {
             </div>
           )}
 
-          {/* Azioni Operative del Personale (Staff Quick Actions) */}
-          {isStaff && cardData.actions && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.25rem' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                Azioni Rapide di Cassa
+          {/* Pannello Operativo In-Card per Esercente: Accredito Punti con Bottoni Tattili Grandi */}
+          {isStaff && hasPointsCapability && cardData.actions?.can_adjust_points && (
+            <div
+              data-testid="operator-credit-panel"
+              style={{
+                marginBottom: '1.25rem',
+                background: '#f0fdf4',
+                border: '2px solid #86efac',
+                borderRadius: 'var(--radius-lg)',
+                padding: '1.25rem',
+                boxShadow: 'var(--shadow-sm)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, fontSize: '1rem', color: '#166534' }}>
+                  <span>⚡</span> Accredita punti al banco
+                </div>
+                <span className="badge badge-success" style={{ fontSize: '0.75rem', fontWeight: 700 }}>
+                  Esercente
+                </span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem' }}>
-                {cardData.actions.can_adjust_points && (
-                  <Button variant="primary" size="md" className="btn-touch" onClick={() => setIsPointsModalOpen(true)}>
-                    ➕ Gestisci Punti
-                  </Button>
-                )}
-                {cardData.actions.can_redeem_rewards && rewardsCount > 0 && (
+
+              {/* Bottoni Tattili Grandi: +1, +5, +10 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '0.85rem 0.25rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                    transition: 'all 0.1s ease',
+                  }}
+                  disabled={isSubmittingQuickCredit}
+                  onClick={() => handleQuickCredit(1)}
+                >
+                  +1 pt
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '0.85rem 0.25rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                    transition: 'all 0.1s ease',
+                  }}
+                  disabled={isSubmittingQuickCredit}
+                  onClick={() => handleQuickCredit(5)}
+                >
+                  +5 pt
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-touch"
+                  style={{
+                    background: '#ffffff',
+                    border: '2px solid #22c55e',
+                    color: '#15803d',
+                    fontWeight: 800,
+                    fontSize: '1.25rem',
+                    padding: '0.85rem 0.25rem',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                    transition: 'all 0.1s ease',
+                  }}
+                  disabled={isSubmittingQuickCredit}
+                  onClick={() => handleQuickCredit(10)}
+                >
+                  +10 pt
+                </button>
+              </div>
+
+              {/* Opzioni: Altro importo | Da acquisto */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className={`btn btn-touch btn-sm ${quickCreditActiveTab === 'custom' ? 'btn-primary' : 'btn-outline'}`}
+                  style={{
+                    fontWeight: 700,
+                    padding: '0.65rem 0.5rem',
+                    fontSize: '0.9rem',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                  disabled={isSubmittingQuickCredit}
+                  onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'custom' ? null : 'custom')}
+                >
+                  ✍️ Altro importo
+                </button>
+
+                <button
+                  type="button"
+                  className={`btn btn-touch btn-sm ${quickCreditActiveTab === 'receipt' ? 'btn-primary' : 'btn-outline'}`}
+                  style={{
+                    fontWeight: 700,
+                    padding: '0.65rem 0.5rem',
+                    fontSize: '0.9rem',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                  disabled={isSubmittingQuickCredit}
+                  onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'receipt' ? null : 'receipt')}
+                >
+                  🛒 Da acquisto
+                </button>
+              </div>
+
+              {/* Sottomodalità: Altro importo */}
+              {quickCreditActiveTab === 'custom' && (
+                <form
+                  onSubmit={handleQuickCustomSubmit}
+                  style={{
+                    marginTop: '0.75rem',
+                    padding: '0.75rem',
+                    background: '#ffffff',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid #bbf7d0',
+                  }}
+                >
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                    Punti da accreditare:
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '120px' }}>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={quickCustomPoints}
+                        onChange={(e) => setQuickCustomPoints(e.target.value)}
+                        placeholder="es. 25"
+                        autoFocus
+                        style={{ margin: 0 }}
+                      />
+                    </div>
+                    <Button type="submit" variant="primary" size="md" isLoading={isSubmittingQuickCredit}>
+                      ✓ Accredita
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Sottomodalità: Da acquisto */}
+              {quickCreditActiveTab === 'receipt' && (
+                <form
+                  onSubmit={handleQuickReceiptSubmit}
+                  style={{
+                    marginTop: '0.75rem',
+                    padding: '0.75rem',
+                    background: '#ffffff',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid #bbf7d0',
+                  }}
+                >
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                    Totale spesa scontrino (€):
+                  </label>
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={quickReceiptAmount}
+                      onChange={(e) => setQuickReceiptAmount(e.target.value)}
+                      placeholder="es. 45.00"
+                      autoFocus
+                      style={{ margin: 0 }}
+                    />
+                  </div>
+
+                  {quickReceiptCalcError && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-danger)', marginBottom: '0.5rem' }}>
+                      {quickReceiptCalcError}
+                    </div>
+                  )}
+
+                  {isCalculatingQuickReceipt && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                      Calcolo punti in corso...
+                    </div>
+                  )}
+
+                  {quickReceiptCalculatedPoints !== null && !quickReceiptCalcError && (
+                    <div style={{ fontSize: '0.9rem', color: '#166534', fontWeight: 700, marginBottom: '0.5rem' }}>
+                      Punti calcolati: +{quickReceiptCalculatedPoints} pt
+                    </div>
+                  )}
+
                   <Button
-                    variant="secondary"
+                    type="submit"
+                    variant="primary"
                     size="md"
-                    className="btn-touch"
-                    onClick={() => setIsRewardsModalOpen(true)}
+                    style={{ width: '100%' }}
+                    isLoading={isSubmittingQuickCredit}
+                    disabled={quickReceiptCalculatedPoints === null || quickReceiptCalculatedPoints <= 0}
                   >
-                    🎁 Riscatta Premio
+                    ✓ Conferma accredito ({quickReceiptCalculatedPoints ?? 0} pt)
                   </Button>
-                )}
+                </form>
+              )}
+
+              {/* Rettifica Manuale Avanzata */}
+              <div style={{ marginTop: '0.75rem', textAlign: 'right' }}>
+                <button
+                  type="button"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--color-text-muted)',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                  }}
+                  onClick={() => setIsPointsModalOpen(true)}
+                >
+                  ➕ Gestisci Punti
+                </button>
               </div>
+            </div>
+          )}
+
+          {/* Azioni Operative Secondarie: Riscatto Premi (se abilitato e presenti) */}
+          {isStaff && cardData.actions?.can_redeem_rewards && rewardsCount > 0 && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <Button
+                variant="secondary"
+                size="md"
+                className="btn-touch"
+                style={{ width: '100%' }}
+                onClick={() => setIsRewardsModalOpen(true)}
+              >
+                🎁 Riscatta Premio
+              </Button>
             </div>
           )}
 
