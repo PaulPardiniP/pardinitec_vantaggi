@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { CustomerDetailPage } from '../pages/dashboard/CustomerDetailPage';
@@ -37,11 +37,14 @@ vi.mock('../api/services', () => ({
     getConsents: vi.fn(),
   },
   loyaltyApi: {
+    getCredentials: vi.fn(),
     listAccountCredentials: vi.fn(),
     createAccount: vi.fn(),
     rotateCredential: vi.fn(),
+    revealLink: vi.fn(),
   },
 }));
+
 
 describe('CustomerDetailPage - Flusso Attivazione / Upgrade Conti (Regola Definitiva)', () => {
   beforeEach(() => {
@@ -250,5 +253,155 @@ describe('CustomerDetailPage - Flusso Attivazione / Upgrade Conti (Regola Defini
       expect(within(modal).getByText(/Il cliente possiede già un conto standard Vantaggi attivo./i)).toBeInTheDocument();
       expect(within(modal).getByRole('heading', { name: /Crea Conto VIP Separato/i })).toBeInTheDocument();
     });
+  });
+
+  it('4. Credenziale moderna con has_recoverable_token: mostra pulsante "Visualizza / Copia link" e permette recupero sicuro', async () => {
+    const customer = {
+      id: 55,
+      business_id: 10,
+      first_name: 'Mario',
+      last_name: 'Rossi',
+      email: 'mario@test.it',
+      phone: '+39333111222',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+      loyalty_accounts: [
+        {
+          id: 101,
+          business_id: 10,
+          customer_id: 55,
+          card_profile_id: 1,
+          profile_code: 'punti',
+          profile_name: 'Punti',
+          balance: 100,
+          status: 'active',
+          created_at: '2026-01-01',
+        },
+      ],
+    };
+
+    (customerApi.get as any).mockResolvedValue(customer);
+    (customerApi.getConsents as any).mockResolvedValue({ id: 1, customer_id: 55, privacy_policy: true, history: [] });
+    (loyaltyApi.listAccountCredentials as any).mockResolvedValue([
+      {
+        id: 201,
+        business_id: 10,
+        loyalty_account_id: 101,
+        type: 'digital',
+        status: 'active',
+        issued_at: '2026-01-01T12:00:00Z',
+        has_recoverable_token: true,
+      },
+    ]);
+    (loyaltyApi.revealLink as any).mockResolvedValue({
+      credential_id: 201,
+      token: 'revealed_token_abc123',
+      public_url: '/c/revealed_token_abc123',
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard/customers/55']}>
+        <Routes>
+          <Route path="/dashboard/customers/:id" element={<CustomerDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Mario Rossi/i)).toBeInTheDocument();
+    });
+
+    // Deve mostrare il pulsante "Visualizza / Copia link" e la spiegazione della cifratura
+    expect(screen.getByText(/Il link fisso della carta è cifrato in modo sicuro/i)).toBeInTheDocument();
+    const revealBtn = screen.getByRole('button', { name: /Visualizza \/ Copia link/i });
+    expect(revealBtn).toBeInTheDocument();
+
+    // Deve essere presente anche "Rigenera credenziale"
+    expect(screen.getByRole('button', { name: /Rigenera credenziale/i })).toBeInTheDocument();
+
+    // Clic sul pulsante apre la modale di conferma
+    fireEvent.click(revealBtn);
+
+    const modal = screen.getByRole('dialog');
+    expect(within(modal).getByRole('heading', { name: /Visualizza \/ Copia Link Carta Digitale/i })).toBeInTheDocument();
+    expect(within(modal).getByText(/Stai per visualizzare il link della credenziale/i)).toBeInTheDocument();
+
+
+    // Conferma la visualizzazione
+    const confirmBtn = within(modal).getByRole('button', { name: /Conferma e Visualizza/i });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(loyaltyApi.revealLink).toHaveBeenCalledWith(10, 201);
+    });
+
+    // Risultato visualizzato: messaggio di successo e pulsante di copia
+    await waitFor(() => {
+      expect(within(modal).getByText(/Link recuperato con successo/i)).toBeInTheDocument();
+      expect(within(modal).getByRole('button', { name: /Copia Link/i })).toBeInTheDocument();
+      const inputEl = within(modal).getByRole('textbox') as HTMLInputElement;
+      expect(inputEl.value).toContain('/c/revealed_token_abc123');
+    });
+  });
+
+  it('5. Credenziale legacy con has_recoverable_token = false: mostra avviso e nasconde "Visualizza / Copia link"', async () => {
+    const customer = {
+      id: 55,
+      business_id: 10,
+      first_name: 'Giuseppe',
+      last_name: 'Verdi',
+      email: 'giuseppe@test.it',
+      phone: '+39333999888',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+      loyalty_accounts: [
+        {
+          id: 102,
+          business_id: 10,
+          customer_id: 55,
+          card_profile_id: 1,
+          profile_code: 'punti',
+          profile_name: 'Punti',
+          balance: 50,
+          status: 'active',
+          created_at: '2026-01-01',
+        },
+      ],
+    };
+
+    (customerApi.get as any).mockResolvedValue(customer);
+    (customerApi.getConsents as any).mockResolvedValue({ id: 1, customer_id: 55, privacy_policy: true, history: [] });
+    (loyaltyApi.listAccountCredentials as any).mockResolvedValue([
+      {
+        id: 202,
+        business_id: 10,
+        loyalty_account_id: 102,
+        type: 'digital',
+        status: 'active',
+        issued_at: '2026-01-01T12:00:00Z',
+        has_recoverable_token: false,
+      },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard/customers/55']}>
+        <Routes>
+          <Route path="/dashboard/customers/:id" element={<CustomerDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Giuseppe Verdi/i)).toBeInTheDocument();
+    });
+
+    // Deve mostrare l'avviso informativo per le credenziali legacy
+    expect(screen.getByText(/Link non recuperabile: rigenera la credenziale una sola volta/i)).toBeInTheDocument();
+
+    // NON deve mostrare il pulsante "Visualizza / Copia link"
+    expect(screen.queryByRole('button', { name: /Visualizza \/ Copia link/i })).not.toBeInTheDocument();
+
+    // Deve mantenere il pulsante "Rigenera credenziale" per permettere la migrazione operativa
+    expect(screen.getByRole('button', { name: /Rigenera credenziale/i })).toBeInTheDocument();
   });
 });

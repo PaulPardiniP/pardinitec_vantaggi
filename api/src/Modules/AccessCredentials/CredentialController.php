@@ -11,6 +11,7 @@ use App\Core\Security\Csrf;
 use App\Modules\Businesses\AuthorizationService;
 use App\Modules\Businesses\ForbiddenException;
 use App\Modules\Businesses\Permission;
+use App\Modules\Businesses\Role;
 use InvalidArgumentException;
 use Throwable;
 
@@ -134,6 +135,44 @@ final class CredentialController
             Response::error($e->getMessage(), 400);
         } catch (Throwable $e) {
             Response::error('Error al rotar credencial.', 500);
+        }
+    }
+
+    /**
+     * Endpoint POST per rivelare il link della credenziale di una carta digitale.
+     * Accessibile esclusivamente da Super Admin, Owner o Manager dello stesso business_id.
+     * Staff e anonimi ricevono 403.
+     * Include header HTTP anti-caching Cache-Control: no-store.
+     */
+    public function revealLink(Request $request, int $businessId, int $credentialId): void
+    {
+        $cookieName = $this->authService->getSessionManager()->getCookieName();
+        $sessionId = $request->getCookie($cookieName);
+        $session = $sessionId ? $this->authService->getCurrentSession($sessionId) : null;
+        if ($session === null) {
+            Response::error('Accesso negato: autenticazione richiesta.', 403);
+        }
+
+        $this->verifyCsrf($request, $session);
+
+        $membership = $this->authzService->getMembership($session['user_id'], $businessId);
+        if (!$membership || !in_array($membership['role'], [Role::SUPER_ADMIN, Role::OWNER, Role::MANAGER], true)) {
+            Response::error('Accesso negato: solo i ruoli Owner, Manager o Super Admin possono visualizzare il link della credenziale.', 403);
+        }
+
+        try {
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Pragma: no-cache');
+
+            $result = $this->credentialService->revealCredentialLink($businessId, $credentialId, $session['user_id']);
+
+            Response::success('Link recuperato con successo.', [
+                'data' => $result,
+            ], 200);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero del link della credenziale.', 500);
         }
     }
 }

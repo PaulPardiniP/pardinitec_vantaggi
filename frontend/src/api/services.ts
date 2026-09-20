@@ -15,6 +15,8 @@ import type {
   Offer,
   Card,
   PublicCardView,
+  BusinessInvitation,
+  BusinessPackages,
 } from '../types';
 
 // ==================== AUTH ====================
@@ -102,8 +104,22 @@ export const businessApi = {
     return res.data;
   },
 
-  async create(data: { name: string; slug?: string; tax_id?: string; self_registration_enabled?: boolean }): Promise<Business> {
-    const res = await apiRequest<{ success: boolean; data: Business }>('/api/v1/businesses', {
+  async create(data: {
+    name: string;
+    slug?: string;
+    tax_id?: string;
+    self_registration_enabled?: boolean;
+    owner_email?: string;
+    owner_first_name?: string;
+    owner_last_name?: string;
+    packages?: {
+      punti?: boolean;
+      vantaggi?: boolean;
+      vip?: boolean;
+      campaigns?: boolean;
+    };
+  }): Promise<Business & { invitation?: BusinessInvitation; packages?: BusinessPackages }> {
+    const res = await apiRequest<{ success: boolean; data: Business & { invitation?: BusinessInvitation; packages?: BusinessPackages } }>('/api/v1/businesses', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -154,6 +170,163 @@ export const businessApi = {
     const res = await apiRequest<{ success: boolean; data: BusinessModule[] }>(`/api/v1/businesses/${businessId}/modules`, {
       method: 'PUT',
       body: JSON.stringify({ module_code: moduleCode, is_enabled: isEnabled }),
+    });
+    return res.data;
+  },
+
+  async getPackages(businessId: number): Promise<{ packages: BusinessPackages; raw_modules: BusinessModule[] }> {
+    const res = await apiRequest<any>(`/api/v1/businesses/${businessId}/packages`);
+    const payload = res?.data || res;
+    return {
+      packages: payload?.packages || res?.packages,
+      raw_modules: payload?.raw_modules || res?.raw_modules || [],
+    };
+  },
+
+  async updatePackage(businessId: number, packageCode: string, enabled: boolean): Promise<{ packages: BusinessPackages; raw_modules: BusinessModule[] }> {
+    const res = await apiRequest<any>(
+      `/api/v1/businesses/${businessId}/packages`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ package_code: packageCode, enabled }),
+      }
+    );
+    const payload = res?.data || res;
+    return {
+      packages: payload?.packages || res?.packages,
+      raw_modules: payload?.raw_modules || res?.raw_modules || [],
+    };
+  },
+
+  // Invitaciones de Propietario / Miembros
+  async createInvitation(
+    businessId: number,
+    data: { email: string; first_name?: string; last_name?: string; role: 'staff' | 'manager' }
+  ): Promise<BusinessInvitation> {
+    const res = await apiRequest<{ success: boolean; data: BusinessInvitation }>(
+      `/api/v1/businesses/${businessId}/invitations`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+    return res.data;
+  },
+
+  async listInvitations(businessId: number): Promise<BusinessInvitation[]> {
+    const res = await apiRequest<{ success: boolean; data: BusinessInvitation[] }>(`/api/v1/businesses/${businessId}/invitations`);
+    return res.data;
+  },
+
+  async resendInvitation(businessId: number, invitationId: number): Promise<BusinessInvitation> {
+    const res = await apiRequest<{ success: boolean; data: BusinessInvitation }>(
+      `/api/v1/businesses/${businessId}/invitations/${invitationId}/resend`,
+      { method: 'POST' }
+    );
+    return res.data;
+  },
+
+  async cancelInvitation(businessId: number, invitationId: number): Promise<{ id: number; status: string }> {
+    const res = await apiRequest<{ success: boolean; data: { id: number; status: string } }>(
+      `/api/v1/businesses/${businessId}/invitations/${invitationId}/cancel`,
+      { method: 'POST' }
+    );
+    return res.data;
+  },
+
+  // Ciclo de Vida y GDPR
+  async archive(businessId: number, isArchived = true): Promise<{ id: number; is_archived: boolean }> {
+    const res = await apiRequest<{ success: boolean; data: { id: number; is_archived: boolean } }>(
+      `/api/v1/admin/businesses/${businessId}/archive`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ is_archived: isArchived }),
+      }
+    );
+    return res.data;
+  },
+
+  async terminate(businessId: number, retentionDays = 30): Promise<{ id: number; status: string; terminated_at: string; scheduled_deletion_at: string }> {
+    const res = await apiRequest<{ success: boolean; data: { id: number; status: string; terminated_at: string; scheduled_deletion_at: string } }>(
+      `/api/v1/admin/businesses/${businessId}/terminate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ retention_days: retentionDays }),
+      }
+    );
+    return res.data;
+  },
+
+  async cancelTermination(businessId: number): Promise<{ id: number; status: string; terminated_at: null; scheduled_deletion_at: null }> {
+    const res = await apiRequest<{ success: boolean; data: { id: number; status: string; terminated_at: null; scheduled_deletion_at: null } }>(
+      `/api/v1/admin/businesses/${businessId}/cancel-termination`,
+      { method: 'POST' }
+    );
+    return res.data;
+  },
+
+  async exportData(businessId: number): Promise<void> {
+    const res = await fetch(`/api/v1/admin/businesses/${businessId}/export`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Errore durante l\'esportazione dei dati.');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition');
+    let filename = `export_commercio_${businessId}.json`;
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
+  async deleteEmpty(businessId: number, confirmSlug: string): Promise<{ id: number; deleted: boolean }> {
+    const res = await apiRequest<{ success: boolean; data: { id: number; deleted: boolean } }>(
+      `/api/v1/admin/businesses/${businessId}/delete-empty`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirm_slug: confirmSlug }),
+      }
+    );
+    return res.data;
+  },
+};
+
+// ==================== INVITATIONS (PUBLIC) ====================
+export const invitationApi = {
+  async validate(token: string): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    business_id: number;
+    business_name: string;
+    role: string;
+    user_exists?: boolean;
+  }> {
+    const res = await apiRequest<{ success: boolean; data: any }>('/api/v1/invitations/validate', {
+      params: { token },
+    });
+    return res.data;
+  },
+
+  async accept(token: string, password = ''): Promise<{ user_id: number; email: string; business_id: number; business_name: string; role?: string }> {
+    const res = await apiRequest<{ success: boolean; data: any }>('/api/v1/invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
     });
     return res.data;
   },
@@ -323,6 +496,16 @@ export const loyaltyApi = {
   async rotateCredential(businessId: number, credentialId: number): Promise<Credential & { token: string; public_url: string }> {
     const res = await apiRequest<{ success: boolean; data: Credential & { token: string; public_url: string } }>(
       `/api/v1/businesses/${businessId}/credentials/${credentialId}/rotate`,
+      {
+        method: 'POST',
+      }
+    );
+    return res.data;
+  },
+
+  async revealLink(businessId: number, credentialId: number): Promise<{ credential_id: number; token: string; public_url: string }> {
+    const res = await apiRequest<{ success: boolean; data: { credential_id: number; token: string; public_url: string } }>(
+      `/api/v1/businesses/${businessId}/credentials/${credentialId}/reveal-link`,
       {
         method: 'POST',
       }
@@ -530,12 +713,12 @@ export const cardsApi = {
     return { data: res.data, pagination: res.pagination };
   },
 
-  async createBatch(quantity: number, designProfileId?: number): Promise<{ created_count: number; cards: any[] }> {
-    const res = await apiRequest<{ success: boolean; data: { created_count: number; cards: any[] } }>('/api/v1/admin/cards/batch', {
+  async createBatch(quantity: number, designProfileId?: number): Promise<{ created_count?: number; count?: number; cards?: any[]; data?: Card[] }> {
+    const res = await apiRequest<{ success: boolean; data: Card[]; count: number }>('/api/v1/admin/cards/batch', {
       method: 'POST',
-      body: JSON.stringify({ quantity, design_profile_id: designProfileId }),
+      body: JSON.stringify({ count: quantity, quantity, design_profile_id: designProfileId }),
     });
-    return res.data;
+    return { created_count: res.count, count: res.count, data: res.data, cards: res.data };
   },
 
   async assign(businessId: number, cardIds: number[]): Promise<{ assigned_count: number }> {
@@ -634,3 +817,4 @@ export const publicCardApi = {
     return res.data;
   },
 };
+

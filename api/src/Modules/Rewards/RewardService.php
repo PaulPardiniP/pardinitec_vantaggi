@@ -27,6 +27,37 @@ final class RewardService
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
+    /**
+     * Cache dei profili di fidelizzazione (code => id)
+     * @var array<string, int>|null
+     */
+    private ?array $profileCodeCache = null;
+
+    private function getProfileIdByCode(string $code): ?int
+    {
+        if ($this->profileCodeCache === null) {
+            $stmt = $this->pdo->query("SELECT `code`, `id` FROM `card_profiles`");
+            $this->profileCodeCache = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+        }
+        return isset($this->profileCodeCache[$code]) ? (int) $this->profileCodeCache[$code] : null;
+    }
+
+    private function getProfileCodeById(int $id): ?string
+    {
+        if ($this->profileCodeCache === null) {
+            $stmt = $this->pdo->query("SELECT `code`, `id` FROM `card_profiles`");
+            $this->profileCodeCache = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+        }
+        $flipped = array_flip($this->profileCodeCache);
+        return $flipped[$id] ?? null;
+    }
+
+    /**
+     * Crea un premio nel catalogo del commercio.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
     public function createReward(int $businessId, array $data): array
     {
         $name = trim((string) ($data['name'] ?? ''));
@@ -40,7 +71,8 @@ final class RewardService
         }
 
         $description = isset($data['description']) ? trim((string) $data['description']) : null;
-        $minProfileId = isset($data['min_profile_id']) && $data['min_profile_id'] !== '' ? (int) $data['min_profile_id'] : null;
+        $rawProfileId = $data['card_profile_id'] ?? $data['min_profile_id'] ?? null;
+        $minProfileId = $rawProfileId !== null && $rawProfileId !== '' ? (int) $rawProfileId : null;
         $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive'], true) ? (string) $data['status'] : 'active';
         $validFrom = !empty($data['valid_from']) ? (string) $data['valid_from'] : null;
         $validUntil = !empty($data['valid_until']) ? (string) $data['valid_until'] : null;
@@ -94,7 +126,10 @@ final class RewardService
         }
 
         $description = array_key_exists('description', $data) ? ($data['description'] !== null ? trim((string) $data['description']) : null) : $existing['description'];
-        $minProfileId = array_key_exists('min_profile_id', $data) ? ($data['min_profile_id'] !== null ? (int) $data['min_profile_id'] : null) : $existing['min_profile_id'];
+        $rawProfileId = array_key_exists('card_profile_id', $data)
+            ? $data['card_profile_id']
+            : (array_key_exists('min_profile_id', $data) ? $data['min_profile_id'] : $existing['min_profile_id']);
+        $minProfileId = $rawProfileId !== null && $rawProfileId !== '' ? (int) $rawProfileId : null;
         $status = isset($data['status']) && in_array($data['status'], ['active', 'inactive'], true) ? (string) $data['status'] : $existing['status'];
         $validFrom = array_key_exists('valid_from', $data) ? ($data['valid_from'] ?: null) : $existing['valid_from'];
         $validUntil = array_key_exists('valid_until', $data) ? ($data['valid_until'] ?: null) : $existing['valid_until'];
@@ -183,8 +218,48 @@ final class RewardService
         }
 
         if ($cardProfileId !== null) {
-            $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` = :card_profile_id)";
-            $params['card_profile_id'] = $cardProfileId;
+            $profileCode = $this->getProfileCodeById($cardProfileId);
+            $puntiId = $this->getProfileIdByCode('punti');
+            $vantaggiId = $this->getProfileIdByCode('vantaggi');
+            $vipId = $this->getProfileIdByCode('vip');
+
+            if ($profileCode === 'vip') {
+                // Cuenta VIP: ve EXCLUSIVAMENTE premios VIP. Nunca premios Punti o Vantaggi.
+                if ($vipId !== null) {
+                    $where[] = "r.`min_profile_id` = :vip_id";
+                    $params['vip_id'] = $vipId;
+                } else {
+                    $where[] = "1 = 0";
+                }
+            } elseif ($profileCode === 'vantaggi') {
+                // Cuenta Vantaggi: ve premios Vantaggi y hereda premios Punti (NULL o puntiId), pero NUNCA VIP.
+                if ($vipId !== null) {
+                    $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` != :vip_id)";
+                    $params['vip_id'] = $vipId;
+                }
+                if ($vantaggiId !== null && $puntiId !== null) {
+                    $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` IN (:vantaggi_id, :punti_id))";
+                    $params['vantaggi_id'] = $vantaggiId;
+                    $params['punti_id'] = $puntiId;
+                }
+            } elseif ($profileCode === 'punti') {
+                // Cuenta Punti: ve EXCLUSIVAMENTE premios Punti (NULL o puntiId), NUNCA Vantaggi ni VIP.
+                if ($vipId !== null) {
+                    $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` != :vip_id)";
+                    $params['vip_id'] = $vipId;
+                }
+                if ($vantaggiId !== null) {
+                    $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` != :vantaggi_id)";
+                    $params['vantaggi_id'] = $vantaggiId;
+                }
+                if ($puntiId !== null) {
+                    $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` = :punti_id)";
+                    $params['punti_id'] = $puntiId;
+                }
+            } else {
+                $where[] = "(r.`min_profile_id` IS NULL OR r.`min_profile_id` = :card_profile_id)";
+                $params['card_profile_id'] = $cardProfileId;
+            }
         }
 
         $whereSql = implode(' AND ', $where);
@@ -278,9 +353,26 @@ final class RewardService
                 throw new InvalidArgumentException('El premio solicitado ha expirado.');
             }
 
-            // Comprobar perfil mínimo si corresponde
-            if ($reward['min_profile_id'] !== null && (int) $reward['min_profile_id'] !== (int) $lockedAccount['card_profile_id']) {
-                throw new InvalidArgumentException('Este premio no está habilitado para el perfil de esta cuenta.');
+            // Comprobar segmentación por perfil
+            $accProfileId = (int) $lockedAccount['card_profile_id'];
+            $accProfileCode = $this->getProfileCodeById($accProfileId);
+            $puntiId = $this->getProfileIdByCode('punti');
+            $vantaggiId = $this->getProfileIdByCode('vantaggi');
+            $vipId = $this->getProfileIdByCode('vip');
+            $rewardProfileId = $reward['min_profile_id'] !== null ? (int) $reward['min_profile_id'] : null;
+
+            if ($accProfileCode === 'vip') {
+                if ($rewardProfileId === null || ($vipId !== null && $rewardProfileId !== $vipId)) {
+                    throw new InvalidArgumentException('Questo premio non è disponibile per il profilo VIP.');
+                }
+            } elseif ($accProfileCode === 'punti') {
+                if ($rewardProfileId !== null && $puntiId !== null && $rewardProfileId !== $puntiId) {
+                    throw new InvalidArgumentException('Questo premio non è abilitato per il profilo Punti.');
+                }
+            } elseif ($accProfileCode === 'vantaggi') {
+                if ($rewardProfileId !== null && $vipId !== null && $rewardProfileId === $vipId) {
+                    throw new InvalidArgumentException('Questo premio è riservato esclusivamente ai clienti VIP.');
+                }
             }
 
             $pointsCost = (int) $reward['points_cost'];
@@ -447,6 +539,7 @@ final class RewardService
             'description' => $row['description'] ? (string) $row['description'] : null,
             'points_cost' => (int) $row['points_cost'],
             'min_profile_id' => $row['min_profile_id'] !== null ? (int) $row['min_profile_id'] : null,
+            'card_profile_id' => $row['min_profile_id'] !== null ? (int) $row['min_profile_id'] : null,
             'min_profile_name' => $row['min_profile_name'] ?? null,
             'min_profile_code' => $row['min_profile_code'] ?? null,
             'status' => (string) $row['status'],

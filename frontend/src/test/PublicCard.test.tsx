@@ -111,11 +111,11 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
     await waitFor(() => {
       expect(screen.getByText('Ristorante Belvedere')).toBeInTheDocument();
       expect(screen.getByText(/Profilo VIP Club/i)).toBeInTheDocument();
-      expect(screen.getByText(/Vedi offerte e promozioni \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Offerte Esclusive VIP \(1\)/i)).toBeInTheDocument();
     });
 
     // Apertura modale offerte
-    fireEvent.click(screen.getByText(/Vedi offerte e promozioni \(1\)/i));
+    fireEvent.click(screen.getByText(/Offerte Esclusive VIP \(1\)/i));
     expect(screen.getByRole('heading', { name: 'Offerte Esclusive VIP' })).toBeInTheDocument();
     expect(screen.getByText('Aperitivo VIP Riservato')).toBeInTheDocument();
     expect(screen.getByText('Sconto €15,00')).toBeInTheDocument();
@@ -634,12 +634,12 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Vedi offerte e promozioni \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Offerte Vantaggi \(1\)/i)).toBeInTheDocument();
       expect(screen.getByText(/Vedi premi \(1\)/i)).toBeInTheDocument();
     });
 
     // Test formattazione automatica beneficio percentuale decimale
-    fireEvent.click(screen.getByText(/Vedi offerte e promozioni \(1\)/i));
+    fireEvent.click(screen.getByText(/Offerte Vantaggi \(1\)/i));
     expect(screen.getByText('Sconto 15,5%')).toBeInTheDocument();
   });
 });

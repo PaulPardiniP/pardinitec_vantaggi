@@ -274,6 +274,73 @@ final class BusinessController
         }
     }
 
+    public function getPackages(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $authzService = new AuthorizationService();
+            $authzService->requirePermission($session['user_id'], $businessId, Permission::BUSINESS_VIEW);
+
+            $capabilityService = new \App\Modules\Loyalty\CapabilityService();
+            $packages = $capabilityService->getBusinessPackages($businessId);
+            $rawModules = $capabilityService->getBusinessModules($businessId);
+
+            Response::success('Pacchetti e profili commerciali recuperati.', [
+                'data' => [
+                    'packages' => $packages,
+                    'raw_modules' => $rawModules,
+                ],
+                'packages' => $packages,
+                'raw_modules' => $rawModules,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero dei pacchetti.', 500);
+        }
+    }
+
+    public function updatePackage(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $authzService = new AuthorizationService();
+            $authzService->requirePermission($session['user_id'], $businessId, Permission::SETTINGS_MANAGE);
+
+            $body = $request->getJsonBody();
+            $packageCode = trim((string) ($body['package_code'] ?? ''));
+            $enabled = (bool) ($body['enabled'] ?? false);
+
+            if ($packageCode === '') {
+                Response::error('Parametro package_code mancante.', 422);
+            }
+
+            $capabilityService = new \App\Modules\Loyalty\CapabilityService();
+            $capabilityService->setBusinessPackage($businessId, $packageCode, $enabled);
+
+            $packages = $capabilityService->getBusinessPackages($businessId);
+            $rawModules = $capabilityService->getBusinessModules($businessId);
+
+            Response::success('Pacchetto commerciale aggiornato con successo.', [
+                'data' => [
+                    'packages' => $packages,
+                    'raw_modules' => $rawModules,
+                ],
+                'packages' => $packages,
+                'raw_modules' => $rawModules,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'aggiornamento del pacchetto.', 500);
+        }
+    }
+
     public function listPaginated(Request $request): void
     {
         $session = $this->authenticate($request);
@@ -293,4 +360,244 @@ final class BusinessController
             Response::error('Error al listar comercios paginados.', 500);
         }
     }
+
+    // ==========================================
+    // INVITACIONES DE COMERCIO (OWNER ONBOARDING / COLLABORATORI)
+    // ==========================================
+
+    public function createInvitation(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $result = $this->businessService->createMemberInvitation($session['user_id'], $businessId, $body);
+            Response::success('Invito inviato con successo.', ['data' => $result], 201);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (ValidationException $e) {
+            Response::error($e->getMessage(), 422, $e->getErrors());
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la creazione dell\'invito.', 500);
+        }
+    }
+
+    public function listInvitations(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $invitations = $this->businessService->listInvitations($session['user_id'], $businessId);
+            Response::success('Inviti recuperati con successo.', ['data' => $invitations], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero degli inviti.', 500);
+        }
+    }
+
+    public function resendInvitation(Request $request, int $businessId, int $invitationId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $result = $this->businessService->resendInvitation($session['user_id'], $businessId, $invitationId);
+            Response::success('Invito reinviato con successo.', ['data' => $result], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il reinvio dell\'invito.', 500);
+        }
+    }
+
+    public function cancelInvitation(Request $request, int $businessId, int $invitationId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $result = $this->businessService->cancelInvitation($session['user_id'], $businessId, $invitationId);
+            Response::success('Invito annullato con successo.', ['data' => $result], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'annullamento dell\'invito.', 500);
+        }
+    }
+
+    // Endpoint público para validar invitación
+    public function validateInvitation(Request $request): void
+    {
+        $token = trim((string) ($request->getQuery('token') ?? ''));
+        if ($token === '') {
+            Response::error('Token di invito mancante.', 400);
+        }
+
+        try {
+            $data = $this->businessService->validateInvitation($token);
+            Response::success('Invito valido.', ['data' => $data], 200);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la verifica dell\'invito.', 500);
+        }
+    }
+
+    // Endpoint público para aceptar invitación y crear/confirmar contraseña
+    public function acceptInvitation(Request $request): void
+    {
+        try {
+            $body = $request->getJsonBody();
+            $token = trim((string) ($body['token'] ?? ''));
+            $password = (string) ($body['password'] ?? '');
+
+            if ($token === '') {
+                Response::error('Token di invito obbligatorio.', 422);
+            }
+
+            $authUserId = null;
+            $authHeader = $request->getHeader('Authorization');
+            if ($authHeader && preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+                try {
+                    $sessionService = new \App\Core\Auth\SessionService($this->pdo);
+                    $session = $sessionService->validateSession($matches[1]);
+                    $authUserId = (int) $session['user_id'];
+                } catch (\Throwable) {
+                    // Nessuna sessione valida
+                }
+            }
+
+            $user = $this->businessService->acceptInvitation($token, $password, $authUserId);
+            Response::success('Invito accettato con successo. Ora puoi accedere al punto vendita.', ['data' => $user], 200);
+        } catch (ValidationException $e) {
+            Response::error($e->getMessage(), 422, $e->getErrors());
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'accettazione dell\'invito.', 500);
+        }
+    }
+
+    // ==========================================
+    // CICLO DE VIDA Y GDPR (SUPER ADMIN)
+    // ==========================================
+
+    public function archive(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $isArchived = isset($body['is_archived']) ? (bool) $body['is_archived'] : true;
+            $result = $this->businessService->archiveBusiness((int) $session['user_id'], $businessId, $isArchived);
+
+            Response::success($isArchived ? 'Commercio archiviato con successo.' : 'Commercio ripristinato dall\'archivio.', [
+                'data' => $result,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'archiviazione del commercio.', 500);
+        }
+    }
+
+    public function terminate(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $retentionDays = isset($body['retention_days']) ? (int) $body['retention_days'] : 30;
+            $result = $this->businessService->terminateBusiness((int) $session['user_id'], $businessId, $retentionDays);
+
+            Response::success('Commercio disattivato e cessazione programmata registrata con successo.', [
+                'data' => $result,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la terminazione del commercio.', 500);
+        }
+    }
+
+    public function cancelTermination(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $result = $this->businessService->cancelTermination((int) $session['user_id'], $businessId);
+
+            Response::success('Cessazione programmata annullata e commercio riattivato.', [
+                'data' => $result,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'annullamento della terminazione.', 500);
+        }
+    }
+
+    public function deleteEmpty(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $body = $request->getJsonBody();
+            $confirmSlug = trim((string) ($body['confirm_slug'] ?? ''));
+
+            $result = $this->businessService->deleteEmptyBusiness((int) $session['user_id'], $businessId, $confirmSlug);
+
+            Response::success('Commercio vuoto eliminato definitivamente.', [
+                'data' => $result,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (ValidationException $e) {
+            Response::error($e->getMessage(), 422, $e->getErrors());
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'eliminazione del commercio.', 500);
+        }
+    }
+
+    public function exportData(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $data = $this->businessService->exportBusinessData((int) $session['user_id'], $businessId);
+
+            $filename = 'export_commercio_' . $businessId . '_' . gmdate('Ymd_His') . '.json';
+            header('Content-Type: application/json; charset=utf-8');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'esportazione dei dati: ' . $e->getMessage(), 500);
+        }
+    }
 }
+

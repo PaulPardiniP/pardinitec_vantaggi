@@ -295,8 +295,11 @@ export const PublicCardPage: React.FC = () => {
   const rewardsCount = cardData.rewards?.length || 0;
   const transactionsCount = cardData.recent_transactions?.length || 0;
   const hasPointsCapability = cardData.loyalty_account?.balance !== undefined;
-  const hasOffersCapability = profileCode !== 'punti';
-  const hasRewardsCapability = hasPointsCapability;
+
+  // Segmentazione rigorosa per profilo: se una funzione non è abilitata per il profilo o non ha elementi, il bottone NON viene renderizzato
+  const canShowOffers = profileCode !== 'punti' && offersCount > 0;
+  const canShowRewards = rewardsCount > 0;
+  const canShowHistory = hasPointsCapability && transactionsCount > 0;
 
   return (
     <div className="public-card-container">
@@ -471,45 +474,46 @@ export const PublicCardPage: React.FC = () => {
 
           {/* Bottoni Tattili Verticali (Mobile-First Touch Buttons) */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
-            {/* 1. Offerte e Promozioni */}
-            {hasOffersCapability && (
+            {/* 1. Offerte e Promozioni: Solo se abilitato per il profilo e presenti */}
+            {canShowOffers && (
               <Button
-                variant={offersCount > 0 ? 'primary' : 'outline'}
+                variant="primary"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={offersCount === 0}
                 onClick={() => setIsOffersModalOpen(true)}
               >
-                <span>🎟️ {offersCount > 0 ? `Vedi offerte e promozioni (${offersCount})` : 'Nessuna offerta disponibile'}</span>
-                {offersCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>
+                  🎟️ {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
+                </span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
 
-            {/* 2. Premi Disponibili */}
-            {hasRewardsCapability && (
+            {/* 2. Premi Disponibili: Solo se presenti */}
+            {canShowRewards && (
               <Button
-                variant={rewardsCount > 0 ? 'secondary' : 'outline'}
+                variant="secondary"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={rewardsCount === 0}
                 onClick={() => setIsRewardsModalOpen(true)}
               >
-                <span>🎁 {rewardsCount > 0 ? `Vedi premi (${rewardsCount})` : 'Nessun premio disponibile'}</span>
-                {rewardsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>
+                  🏆 {profileCode === 'vip' ? 'Premi VIP' : 'Vedi premi'} ({rewardsCount})
+                </span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
 
-            {/* 3. Storico Punti */}
-            {hasPointsCapability && (
+            {/* 3. Storico Punti: Solo se presente capacità punti e movimenti */}
+            {canShowHistory && (
               <Button
                 variant="outline"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={transactionsCount === 0}
                 onClick={() => setIsHistoryModalOpen(true)}
               >
-                <span>📜 {transactionsCount > 0 ? `Storico punti` : 'Nessun movimento'}</span>
-                {transactionsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>📜 Storico punti ({transactionsCount})</span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
           </div>
@@ -530,7 +534,7 @@ export const PublicCardPage: React.FC = () => {
       {/* ========================================================= */}
       <Modal
         isOpen={isOffersModalOpen}
-        title={profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi & VIP'}
+        title={profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'}
         onClose={() => setIsOffersModalOpen(false)}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>
@@ -604,7 +608,7 @@ export const PublicCardPage: React.FC = () => {
       {/* ========================================================= */}
       <Modal
         isOpen={isRewardsModalOpen}
-        title="Premi riscattabili con punti"
+        title={profileCode === 'vip' ? 'Premi Esclusivi VIP' : 'Premi riscattabili con punti'}
         onClose={() => setIsRewardsModalOpen(false)}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>

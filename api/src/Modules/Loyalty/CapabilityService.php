@@ -26,6 +26,13 @@ final class CapabilityService
      */
     public function isCapabilityEnabledForBusiness(int $businessId, string $capabilityCode): bool
     {
+        // 1. Capacidad contractual de Campañas: regulada canónicamente por el plan contratado
+        if ($capabilityCode === 'campaigns') {
+            $planService = new \App\Modules\Plans\PlanService($this->pdo, new \App\Core\Audit\AuditLogger($this->pdo));
+            $plan = $planService->getPlanForBusiness($businessId);
+            return !empty($plan['modules']) && in_array('campaigns', $plan['modules'], true);
+        }
+
         $stmt = $this->pdo->prepare("
             SELECT bm.`is_enabled`
             FROM `business_modules` bm
@@ -42,9 +49,14 @@ final class CapabilityService
         $val = $stmt->fetchColumn();
 
         if ($val === false) {
-            // Si el negocio no tiene filas en business_modules, inicializar con los módulos estándar
-            $this->enableDefaultModulesForBusiness($businessId);
-            return true;
+            // Solo se il commercio non ha alcuna riga in business_modules (es. legacy non migrato), inizializza con i default
+            $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM `business_modules` WHERE `business_id` = :business_id");
+            $countStmt->execute(['business_id' => $businessId]);
+            if ((int) $countStmt->fetchColumn() === 0) {
+                $this->enableDefaultModulesForBusiness($businessId);
+                return true;
+            }
+            return false;
         }
 
         return (bool) $val;
@@ -166,7 +178,11 @@ final class CapabilityService
      */
     public function getBusinessModules(int $businessId): array
     {
-        $this->enableDefaultModulesForBusiness($businessId);
+        $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM `business_modules` WHERE `business_id` = :business_id");
+        $countStmt->execute(['business_id' => $businessId]);
+        if ((int) $countStmt->fetchColumn() === 0) {
+            $this->enableDefaultModulesForBusiness($businessId);
+        }
 
         $stmt = $this->pdo->prepare("
             SELECT m.`code`, m.`name`, m.`description`, bm.`is_enabled`
@@ -203,5 +219,233 @@ final class CapabilityService
         $stmt->execute(['profile_id' => $cardProfileId]);
 
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * Retorna el estado consolidado de los paquetes comerciales (Punti, Vantaggi, VIP, Campagne).
+     *
+     * @return array{punti: bool, vantaggi: bool, vip: bool, campaigns: bool}
+     */
+    public function getBusinessPackages(int $businessId): array
+    {
+        $modules = $this->getBusinessModules($businessId);
+        $modMap = [];
+        foreach ($modules as $m) {
+            $modMap[$m['code']] = (bool) $m['is_enabled'];
+        }
+
+        // 1. Profilo Punti: accumulo punti e catalogo premi
+        $puntiEnabled = !empty($modMap['points']);
+
+        // 2. Profilo Vantaggi: ampliamento di Punti (conserva punti e premi, aggiunge offerte e benefici)
+        $vantaggiEnabled = !empty($modMap['offers']) && !empty($modMap['benefits']);
+
+        // 3. Profilo VIP: offerte esclusive riservate ai VIP
+        $vipEnabled = !empty($modMap['vip_offers']);
+
+        // 4. Add-on Campagne: regolato canonicamente dal piano contrattuale (plan_modules / business_plans)
+        $planService = new \App\Modules\Plans\PlanService($this->pdo, new \App\Core\Audit\AuditLogger($this->pdo));
+        $plan = $planService->getPlanForBusiness($businessId);
+        $campaignsEnabled = !empty($plan['modules']) && in_array('campaigns', $plan['modules'], true);
+
+        return [
+            'punti' => $puntiEnabled,
+            'vantaggi' => $vantaggiEnabled,
+            'vip' => $vipEnabled,
+            'campaigns' => $campaignsEnabled,
+        ];
+    }
+
+    /**
+     * Activa o desactiva atómicamente un paquete comercial para un comercio.
+     *
+     * @param 'punti'|'vantaggi'|'vip'|'campaigns' $packageCode
+     */
+    public function setBusinessPackage(int $businessId, string $packageCode, bool $enable): void
+    {
+        if (!$enable) {
+            $currentPkgs = $this->getBusinessPackages($businessId);
+            if ($packageCode === 'punti') {
+                if (!empty($currentPkgs['vantaggi'])) {
+                    throw new \InvalidArgumentException('Per disattivare Punti devi prima disattivare il profilo Vantaggi.');
+                }
+                if (empty($currentPkgs['vip'])) {
+                    throw new \InvalidArgumentException('È obbligatorio mantenere attivo almeno un profilo tra Punti o VIP.');
+                }
+            }
+            if ($packageCode === 'vip' && empty($currentPkgs['punti']) && empty($currentPkgs['vantaggi'])) {
+                throw new \InvalidArgumentException('È obbligatorio mantenere attivo almeno un profilo tra Punti o VIP.');
+            }
+        }
+
+        switch ($packageCode) {
+            case 'punti':
+                // Profilo Punti: points e rewards
+                $this->setBusinessModule($businessId, 'points', $enable);
+                $this->setBusinessModule($businessId, 'rewards', $enable);
+                if (!$enable) {
+                    // Se disattiva i punti alla radice, disattiva anche l'ampliamento offerte
+                    $this->setBusinessModule($businessId, 'offers', false);
+                    $this->setBusinessModule($businessId, 'benefits', false);
+                    $this->setBusinessModule($businessId, 'discounts', false);
+                }
+                break;
+
+            case 'vantaggi':
+                // Profilo Vantaggi: AMPLIAMENTO di Punti.
+                // Conserva punti, premi, saldo e credenziali; aggiunge offerte, benefici e sconti.
+                if ($enable) {
+                    $this->setBusinessModule($businessId, 'points', true);
+                    $this->setBusinessModule($businessId, 'rewards', true);
+                    $this->setBusinessModule($businessId, 'offers', true);
+                    $this->setBusinessModule($businessId, 'benefits', true);
+                    $this->setBusinessModule($businessId, 'discounts', true);
+                } else {
+                    // Alla disattivazione dei vantaggi promozionali, conserva saldo punti e catalogo premi
+                    $this->setBusinessModule($businessId, 'offers', false);
+                    $this->setBusinessModule($businessId, 'benefits', false);
+                    $this->setBusinessModule($businessId, 'discounts', false);
+                }
+                break;
+
+            case 'vip':
+                // Profilo VIP: offerte esclusive per clienti VIP
+                $this->setBusinessModule($businessId, 'vip_offers', $enable);
+                break;
+
+            case 'campaigns':
+                // Add-on Campagne: regolato canonicamente da business_plans / plan_modules
+                $planService = new \App\Modules\Plans\PlanService($this->pdo, new \App\Core\Audit\AuditLogger($this->pdo));
+                $plan = $planService->getPlanForBusiness($businessId);
+
+                if ($enable) {
+                    if ($plan === null || !in_array('campaigns', $plan['modules'] ?? [], true)) {
+                        // Assegna il piano attivo che include campaigns con prezzo minimo (es. Plan 2 'Business')
+                        $stmt = $this->pdo->prepare("
+                            SELECT p.`id`
+                            FROM `plans` p
+                            INNER JOIN `plan_modules` pm ON p.`id` = pm.`plan_id`
+                            WHERE p.`is_active` = 1 AND pm.`module_code` = 'campaigns'
+                            ORDER BY p.`price_eur` ASC
+                            LIMIT 1
+                        ");
+                        $stmt->execute();
+                        $targetPlanId = (int) $stmt->fetchColumn();
+                        if ($targetPlanId <= 0) {
+                            $targetPlanId = 2; // Default piano Business con campagne
+                        }
+                        $planService->assignPlanToBusiness($businessId, $targetPlanId, null);
+                    }
+                } else {
+                    if ($plan !== null && in_array('campaigns', $plan['modules'] ?? [], true)) {
+                        // Assegna il piano senza campagne (es. Plan 1 'Starter')
+                        $stmt = $this->pdo->prepare("
+                            SELECT p.`id`
+                            FROM `plans` p
+                            WHERE p.`is_active` = 1
+                              AND p.`id` NOT IN (SELECT `plan_id` FROM `plan_modules` WHERE `module_code` = 'campaigns')
+                            ORDER BY p.`price_eur` ASC
+                            LIMIT 1
+                        ");
+                        $stmt->execute();
+                        $targetPlanId = (int) $stmt->fetchColumn();
+                        if ($targetPlanId <= 0) {
+                            $targetPlanId = 1; // Default piano Starter senza campagne
+                        }
+                        $planService->assignPlanToBusiness($businessId, $targetPlanId, null);
+                    }
+                }
+                break;
+
+            default:
+                throw new InvalidArgumentException("Pacchetto commerciale sconosciuto: '{$packageCode}'.");
+        }
+    }
+
+    /**
+     * Aplica atómicamente los paquetes iniciales a un nuevo comercio según la selección del Super Admin.
+     *
+     * @param array{punti?: bool, vantaggi?: bool, vip?: bool, campaigns?: bool} $packages
+     * @throws \InvalidArgumentException
+     */
+    public function applyInitialPackages(int $businessId, array $packages): void
+    {
+        $punti = !empty($packages['punti']);
+        $vantaggi = !empty($packages['vantaggi']);
+        $vip = !empty($packages['vip']);
+        $campaigns = !empty($packages['campaigns']);
+
+        // Vantaggi è un ampliamento di Punti: se attivo, include e conserva anche punti e catalogo premi
+        if ($vantaggi) {
+            $punti = true;
+        }
+
+        if (!$punti && !$vip) {
+            throw new \InvalidArgumentException('È obbligatorio selezionare almeno un profilo contrattuale tra Punti o VIP.');
+        }
+
+        $modulesStmt = $this->pdo->query("SELECT `id`, `code` FROM `modules` WHERE `status` = 'active'");
+        $allModules = $modulesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt = $this->pdo->prepare("
+            INSERT INTO `business_modules` (`business_id`, `module_id`, `is_enabled`, `created_at`, `updated_at`)
+            VALUES (:biz_id, :mod_id, :is_enabled, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+            ON DUPLICATE KEY UPDATE `is_enabled` = :is_enabled2, `updated_at` = UTC_TIMESTAMP()
+        ");
+
+        foreach ($allModules as $mod) {
+            $code = $mod['code'];
+            $modId = (int) $mod['id'];
+            $enabled = 0;
+
+            if ($code === 'points' || $code === 'rewards') {
+                $enabled = ($punti || $vantaggi) ? 1 : 0;
+            } elseif ($code === 'offers' || $code === 'benefits' || $code === 'discounts') {
+                $enabled = $vantaggi ? 1 : 0;
+            } elseif ($code === 'vip_offers') {
+                $enabled = $vip ? 1 : 0;
+            }
+
+            $stmt->execute([
+                'biz_id' => $businessId,
+                'mod_id' => $modId,
+                'is_enabled' => $enabled,
+                'is_enabled2' => $enabled,
+            ]);
+        }
+
+        // Configurazione contrattuale del piano per Add-on Campagne
+        $planService = new \App\Modules\Plans\PlanService($this->pdo, new \App\Core\Audit\AuditLogger($this->pdo));
+        if ($campaigns) {
+            $pStmt = $this->pdo->prepare("
+                SELECT p.`id`
+                FROM `plans` p
+                INNER JOIN `plan_modules` pm ON p.`id` = pm.`plan_id`
+                WHERE p.`is_active` = 1 AND pm.`module_code` = 'campaigns'
+                ORDER BY p.`price_eur` ASC
+                LIMIT 1
+            ");
+            $pStmt->execute();
+            $targetPlanId = (int) $pStmt->fetchColumn();
+            if ($targetPlanId <= 0) {
+                $targetPlanId = 2;
+            }
+            $planService->assignPlanToBusiness($businessId, $targetPlanId, null);
+        } else {
+            $pStmt = $this->pdo->prepare("
+                SELECT p.`id`
+                FROM `plans` p
+                WHERE p.`is_active` = 1
+                  AND p.`id` NOT IN (SELECT `plan_id` FROM `plan_modules` WHERE `module_code` = 'campaigns')
+                ORDER BY p.`price_eur` ASC
+                LIMIT 1
+            ");
+            $pStmt->execute();
+            $targetPlanId = (int) $pStmt->fetchColumn();
+            if ($targetPlanId <= 0) {
+                $targetPlanId = 1;
+            }
+            $planService->assignPlanToBusiness($businessId, $targetPlanId, null);
+        }
     }
 }

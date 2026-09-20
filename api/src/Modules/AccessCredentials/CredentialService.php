@@ -4,17 +4,26 @@ declare(strict_types=1);
 
 namespace App\Modules\AccessCredentials;
 
+use App\Core\Audit\AuditLogger;
 use App\Core\Database\Connection;
+use App\Core\Security\TokenEncryptionService;
 use InvalidArgumentException;
 use PDO;
 
 final class CredentialService
 {
     private PDO $pdo;
+    private TokenEncryptionService $encryptionService;
+    private AuditLogger $auditLogger;
 
-    public function __construct(?PDO $pdo = null)
-    {
+    public function __construct(
+        ?PDO $pdo = null,
+        ?TokenEncryptionService $encryptionService = null,
+        ?AuditLogger $auditLogger = null
+    ) {
         $this->pdo = $pdo ?? Connection::get();
+        $this->encryptionService = $encryptionService ?? new TokenEncryptionService();
+        $this->auditLogger = $auditLogger ?? new AuditLogger($this->pdo);
     }
 
     /**
@@ -42,6 +51,7 @@ final class CredentialService
         // Generar 32 bytes de entropía criptográfica (64 caracteres hexadecimales)
         $rawToken = bin2hex(random_bytes(32));
         $tokenHash = hash('sha256', $rawToken);
+        $encrypted = $this->encryptionService->encrypt($rawToken);
 
         $stmt = $this->pdo->prepare("
             INSERT INTO `access_credentials` (
@@ -50,6 +60,9 @@ final class CredentialService
                 `card_id`,
                 `type`,
                 `public_token_hash`,
+                `encrypted_token`,
+                `encryption_iv`,
+                `encryption_tag`,
                 `status`,
                 `issued_at`,
                 `created_at`,
@@ -60,6 +73,9 @@ final class CredentialService
                 NULL,
                 'digital',
                 :token_hash,
+                :encrypted_token,
+                :encryption_iv,
+                :encryption_tag,
                 'active',
                 UTC_TIMESTAMP(),
                 UTC_TIMESTAMP(),
@@ -71,6 +87,9 @@ final class CredentialService
             'business_id' => $businessId,
             'loyalty_account_id' => $loyaltyAccountId,
             'token_hash' => $tokenHash,
+            'encrypted_token' => $encrypted['ciphertext'],
+            'encryption_iv' => $encrypted['iv'],
+            'encryption_tag' => $encrypted['tag'],
         ]);
 
         $credentialId = (int) $this->pdo->lastInsertId();
@@ -144,6 +163,7 @@ final class CredentialService
 
             $rawToken = bin2hex(random_bytes(32));
             $tokenHash = hash('sha256', $rawToken);
+            $encrypted = $this->encryptionService->encrypt($rawToken);
 
             // 2. Insertar la nueva credencial física
             $stmt = $this->pdo->prepare("
@@ -153,6 +173,9 @@ final class CredentialService
                     `card_id`,
                     `type`,
                     `public_token_hash`,
+                    `encrypted_token`,
+                    `encryption_iv`,
+                    `encryption_tag`,
                     `status`,
                     `issued_at`,
                     `created_at`,
@@ -163,6 +186,9 @@ final class CredentialService
                     :card_id,
                     'physical',
                     :token_hash,
+                    :encrypted_token,
+                    :encryption_iv,
+                    :encryption_tag,
                     'active',
                     UTC_TIMESTAMP(),
                     UTC_TIMESTAMP(),
@@ -175,6 +201,9 @@ final class CredentialService
                 'loyalty_account_id' => $loyaltyAccountId,
                 'card_id' => $cardId,
                 'token_hash' => $tokenHash,
+                'encrypted_token' => $encrypted['ciphertext'],
+                'encryption_iv' => $encrypted['iv'],
+                'encryption_tag' => $encrypted['tag'],
             ]);
 
             $credentialId = (int) $this->pdo->lastInsertId();
@@ -209,7 +238,8 @@ final class CredentialService
     public function getCredentialsForAccount(int $businessId, int $loyaltyAccountId): array
     {
         $stmt = $this->pdo->prepare("
-            SELECT `id`, `business_id`, `loyalty_account_id`, `card_id`, `type`, `status`, `issued_at`
+            SELECT `id`, `business_id`, `loyalty_account_id`, `card_id`, `type`, `status`, `issued_at`,
+                   (`encrypted_token` IS NOT NULL) AS `has_recoverable_token`
             FROM `access_credentials`
             WHERE `business_id` = :business_id
               AND `loyalty_account_id` = :account_id
@@ -229,6 +259,7 @@ final class CredentialService
             'type' => (string) $r['type'],
             'status' => (string) $r['status'],
             'issued_at' => (string) $r['issued_at'],
+            'has_recoverable_token' => (bool) $r['has_recoverable_token'],
         ], $rows);
     }
 
@@ -410,7 +441,8 @@ final class CredentialService
                    cust.`phone` AS `customer_phone`, cust.`email` AS `customer_email`,
                    cust.`business_id` AS `customer_business_id`,
                    cp.`code` AS `profile_code`, cp.`name` AS `profile_name`,
-                   b.`id` AS `business_id`, b.`name` AS `business_name`, b.`slug` AS `business_slug`
+                   b.`id` AS `business_id`, b.`name` AS `business_name`, b.`slug` AS `business_slug`,
+                   b.`status` AS `business_status`, b.`terminated_at` AS `business_terminated_at`
             FROM `access_credentials` ac
             LEFT JOIN `cards` c ON ac.`card_id` = c.`id`
             LEFT JOIN `loyalty_accounts` la ON ac.`loyalty_account_id` = la.`id`
@@ -430,6 +462,15 @@ final class CredentialService
         $credStatus = (string) $row['credential_status'];
         $credType = (string) $row['credential_type'];
         $cardStatus = $row['card_status'] !== null ? (string) $row['card_status'] : null;
+
+        // 0. Si el comercio asociado está inactivo o terminado, bloquear inmediatamente
+        if ($row['business_id'] !== null && ($row['business_status'] !== 'active' || !empty($row['business_terminated_at']))) {
+            return [
+                'state' => 'not_available',
+                'message' => 'Il servizio per questa attività non è al momento disponibile.',
+                'credential_type' => $credType,
+            ];
+        }
 
         // 1. Estados no disponibles (revoked o replaced)
         if ($credStatus === 'revoked' || $credStatus === 'replaced' || in_array($cardStatus, ['revoked', 'replaced'], true)) {
@@ -520,13 +561,15 @@ final class CredentialService
         $hasRewards = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'rewards')
             && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'rewards');
         $hasOffers = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'offers')
-            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers');
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers')
+            && $profileCode === 'vantaggi';
         $hasVipOffers = $capabilityService->isCapabilityEnabledForBusiness($bizId, 'vip_offers')
-            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers');
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers')
+            && $profileCode === 'vip';
 
-        // Premios, progreso y ofertas permitidas para el perfil
+        // Premi, progresso e offerte permesse per il profilo concreto
         $availableRewards = $hasRewards ? $rewardService->listRewards($bizId, true, $cardProfileId) : [];
-        $nextReward = $hasRewards ? $rewardService->getNextAvailableReward($bizId, (int) $row['balance'], $cardProfileId) : null;
+        $nextReward = ($hasRewards && $hasPoints) ? $rewardService->getNextAvailableReward($bizId, (int) $row['balance'], $cardProfileId) : null;
         $availableOffers = ($hasOffers || $hasVipOffers) ? $offerService->listOffers($bizId, true, $cardProfileId) : [];
 
         $loyaltyAccountData = [
@@ -604,12 +647,14 @@ final class CredentialService
                     $staffView['recent_transactions'] = $pointsService->getAccountTransactions($bizId, $accountId, 1, 5)['data'];
                 }
 
-                if ($hasRewards) {
-                    $staffView['next_reward'] = $nextReward;
+                if ($hasRewards && !empty($availableRewards)) {
+                    if ($nextReward !== null) {
+                        $staffView['next_reward'] = $nextReward;
+                    }
                     $staffView['rewards'] = $availableRewards;
                 }
 
-                if ($hasOffers || $hasVipOffers) {
+                if (($hasOffers || $hasVipOffers) && !empty($availableOffers)) {
                     $staffView['offers'] = $availableOffers;
                 }
 
@@ -653,12 +698,14 @@ final class CredentialService
             }, $rawTx);
         }
 
-        if ($hasRewards) {
-            $publicView['next_reward'] = $nextReward;
+        if ($hasRewards && !empty($availableRewards)) {
+            if ($nextReward !== null) {
+                $publicView['next_reward'] = $nextReward;
+            }
             $publicView['rewards'] = $availableRewards;
         }
 
-        if ($hasOffers || $hasVipOffers) {
+        if (($hasOffers || $hasVipOffers) && !empty($availableOffers)) {
             $publicView['offers'] = $availableOffers;
         }
 
@@ -786,5 +833,64 @@ final class CredentialService
                 'replaced_by_credential_id' => $row['replaced_by_credential_id'] !== null ? (int) $row['replaced_by_credential_id'] : null,
             ];
         }, $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Revela de forma segura el enlace de la tarjeta digital descifrando el token con AES-256-GCM.
+     * Solo para usuarios autorizados (Owner/Manager/SuperAdmin).
+     * Registra en audit_logs quién reveló el enlace (sin guardar el token ni el secret).
+     *
+     * @return array{credential_id: int, token: string, public_url: string}
+     */
+    public function revealCredentialLink(int $businessId, int $credentialId, int $actorUserId): array
+    {
+        $stmt = $this->pdo->prepare("
+            SELECT `id`, `business_id`, `loyalty_account_id`, `type`, `status`, `encrypted_token`, `encryption_iv`, `encryption_tag`
+            FROM `access_credentials`
+            WHERE `id` = :id AND `business_id` = :business_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'id' => $credentialId,
+            'business_id' => $businessId,
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            throw new InvalidArgumentException('Credenziale non trovata per questo commercio.');
+        }
+
+        if ($row['status'] !== 'active') {
+            throw new InvalidArgumentException('Impossibile recuperare il link di una credenziale non attiva.');
+        }
+
+        if (empty($row['encrypted_token']) || empty($row['encryption_iv']) || empty($row['encryption_tag'])) {
+            throw new InvalidArgumentException('Link non recuperabile: rigenera la credenziale una sola volta.');
+        }
+
+        $plainToken = $this->encryptionService->decrypt(
+            (string) $row['encrypted_token'],
+            (string) $row['encryption_iv'],
+            (string) $row['encryption_tag']
+        );
+
+        // Registrar auditoría obligatoria sin incluir el token
+        $this->auditLogger->log(
+            'credential.reveal_link',
+            'access_credentials',
+            (int) $row['id'],
+            [
+                'loyalty_account_id' => (int) $row['loyalty_account_id'],
+                'credential_type' => (string) $row['type'],
+            ],
+            $actorUserId,
+            $businessId
+        );
+
+        return [
+            'credential_id' => (int) $row['id'],
+            'token' => $plainToken,
+            'public_url' => "/c/{$plainToken}",
+        ];
     }
 }

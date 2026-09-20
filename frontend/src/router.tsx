@@ -25,6 +25,7 @@ import { AdminCardsPage } from './pages/admin/AdminCardsPage';
 import { AdminPlansPage } from './pages/admin/AdminPlansPage';
 import { AdminAuditPage } from './pages/admin/AdminAuditPage';
 
+import { AcceptInvitationPage } from './pages/auth/AcceptInvitationPage';
 import { TwoFactorPage } from './pages/auth/TwoFactorPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
@@ -36,6 +37,10 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  {
+    path: '/invitations/:token',
+    element: <AcceptInvitationPage />,
   },
   {
     path: '/c/:token',

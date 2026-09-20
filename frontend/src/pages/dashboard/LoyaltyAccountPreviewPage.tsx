@@ -73,8 +73,11 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
   const rewardsCount = previewData.rewards?.length || 0;
   const transactionsCount = previewData.recent_transactions?.length || 0;
   const hasPointsCapability = previewData.loyalty_account?.balance !== undefined;
-  const hasOffersCapability = profileCode !== 'punti';
-  const hasRewardsCapability = hasPointsCapability;
+
+  // Segmentazione rigorosa per profilo: se una funzione non è abilitata per il profilo o non ha elementi, il bottone NON viene renderizzato
+  const canShowOffers = profileCode !== 'punti' && offersCount > 0;
+  const canShowRewards = rewardsCount > 0;
+  const canShowHistory = hasPointsCapability && transactionsCount > 0;
   const customerId = (previewData.loyalty_account as any)?.customer_id;
 
   return (
@@ -110,7 +113,7 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
           </div>
 
           <h1 style={{ fontSize: '1.6rem', fontWeight: 800, margin: 0 }}>
-            {previewData.business?.name || activeBusiness?.name || 'Pardinitec Vantaggi'}
+            {previewData.business?.name || 'Pardinitec Vantaggi'}
           </h1>
 
           <div style={{ marginTop: '0.5rem' }}>
@@ -128,25 +131,24 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
         </div>
 
         <div className="public-card-body">
-          {/* Blocco Informativo di Sostituzione QR Code (Cero token falso, cero token ricostruito) */}
+          {/* Avviso Anteprima Carta Digitale */}
           <div
-            className="card-preview-banner"
             data-testid="card-preview-notice"
             style={{
-              background: 'linear-gradient(135deg, #f5f3ff 0%, #eff6ff 100%)',
-              border: '2px dashed var(--color-primary-border)',
-              borderRadius: 'var(--radius-lg)',
-              padding: '1.25rem 1rem',
               textAlign: 'center',
               marginBottom: '1.25rem',
+              background: '#f8fafc',
+              border: '2px dashed var(--color-border)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '1.25rem 1rem',
             }}
           >
-            <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>👁️</div>
-            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-primary)', letterSpacing: '0.02em' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>📱</div>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text-main)', marginBottom: '0.25rem' }}>
               Anteprima interna — il QR reale del cliente resta invariato
             </div>
-            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', margin: '0.5rem 0 0 0', lineHeight: 1.4 }}>
-              Questa schermata simula l'esperienza visiva del cliente. Non sostituisce il link già consegnato né modifica alcuna credenziale.
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.4 }}>
+              Questa vista mostra fedelmente il saldo, il catalogo premi e le offerte attive così come appaiono al cliente nella sua schermata digitale.
             </p>
           </div>
 
@@ -176,45 +178,46 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
 
           {/* Pulsanti Grandi Mobile-first per Modali */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-            {/* 1. Offerte e Vantaggi */}
-            {hasOffersCapability && (
+            {/* 1. Offerte: Solo se abilitato per il profilo e presenti */}
+            {canShowOffers && (
               <Button
                 variant="outline"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={offersCount === 0}
                 onClick={() => setIsOffersModalOpen(true)}
               >
-                <span>🎁 {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi & VIP'} {offersCount > 0 ? `(${offersCount})` : ''}</span>
-                {offersCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>
+                  🎁 {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
+                </span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
 
-            {/* 2. Catalogo Premi */}
-            {hasRewardsCapability && (
+            {/* 2. Catalogo Premi: Solo se presenti */}
+            {canShowRewards && (
               <Button
                 variant="outline"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={rewardsCount === 0}
                 onClick={() => setIsRewardsModalOpen(true)}
               >
-                <span>🏆 Premi con Punti {rewardsCount > 0 ? `(${rewardsCount})` : ''}</span>
-                {rewardsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>
+                  🏆 {profileCode === 'vip' ? 'Premi VIP' : 'Premi con Punti'} ({rewardsCount})
+                </span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
 
-            {/* 3. Storico Punti */}
-            {hasPointsCapability && (
+            {/* 3. Storico Punti: Solo se presente capacità punti e movimenti */}
+            {canShowHistory && (
               <Button
                 variant="outline"
                 className="btn-touch"
                 style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                disabled={transactionsCount === 0}
                 onClick={() => setIsHistoryModalOpen(true)}
               >
-                <span>📜 {transactionsCount > 0 ? `Storico punti (${transactionsCount})` : 'Nessun movimento'}</span>
-                {transactionsCount > 0 && <span style={{ fontSize: '1.1rem' }}>➔</span>}
+                <span>📜 Storico punti ({transactionsCount})</span>
+                <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
           </div>
@@ -226,7 +229,7 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
       {/* ========================================================= */}
       <Modal
         isOpen={isOffersModalOpen}
-        title={profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi & VIP'}
+        title={profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'}
         onClose={() => setIsOffersModalOpen(false)}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>
@@ -286,7 +289,7 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
       {/* ========================================================= */}
       <Modal
         isOpen={isRewardsModalOpen}
-        title="Premi riscattabili con punti"
+        title={profileCode === 'vip' ? 'Premi Esclusivi VIP' : 'Premi riscattabili con punti'}
         onClose={() => setIsRewardsModalOpen(false)}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '65vh', overflowY: 'auto' }}>

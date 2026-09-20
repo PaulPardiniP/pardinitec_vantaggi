@@ -282,6 +282,7 @@ try {
     $resCreateBiz = httpRequest('POST', '/api/v1/businesses', [
         'name' => 'Trattoria Bella Napoli',
         'tax_id' => 'IT99887766554',
+        'packages' => ['punti' => true, 'vantaggi' => true, 'vip' => true, 'campaigns' => false],
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
     assertHttp("POST /api/v1/businesses crea comercio con 201", $resCreateBiz['status'] === 201 && $resCreateBiz['json']['success'] === true);
     assertHttp("Comercio creado tiene self_registration_enabled = false por defecto", isset($resCreateBiz['json']['data']['self_registration_enabled']) && $resCreateBiz['json']['data']['self_registration_enabled'] === false);
@@ -531,7 +532,8 @@ try {
     );
 
     // 39. Resolución pública: Nueva tarjeta activa responde 200 a anónimos sin PII
-    $resResolveNew = httpRequest('GET', "/c/{$card2Token}");
+    $newCardToken = (string) ($resReplaceCard['json']['data']['token'] ?? $resReplaceCard['json']['data']['new_card']['token'] ?? $card2Token);
+    $resResolveNew = httpRequest('GET', "/c/{$newCardToken}");
     assertHttp("GET /c/<new_token> resuelve tarjeta activa a anónimo con 200 sin PII",
         $resResolveNew['status'] === 200 &&
         $resResolveNew['json']['data']['state'] === 'active' &&
@@ -687,6 +689,7 @@ try {
     $httpOpIdPuntiFail = 'http_op_pts_fail_' . time();
     $resRedeemPuntiFail = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$createdAccountId}/rewards/{$createdRewId}/redeem", [
         'operation_id' => $httpOpIdPuntiFail,
+        'delivery_confirmed' => true,
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
     assertHttp("POST /rewards/{id}/redeem rechaza cuenta 'punti' sin capacidad 'rewards' con 403",
         $resRedeemPuntiFail['status'] === 403
@@ -721,6 +724,7 @@ try {
     $httpOpIdRew = 'http_op_rew_' . time();
     $resRedeemRew = httpRequest('POST', "/api/v1/businesses/{$createdBizId}/loyalty-accounts/{$vantaggiAccountId}/rewards/{$createdRewId}/redeem", [
         'operation_id' => $httpOpIdRew,
+        'delivery_confirmed' => true,
     ], ['X-CSRF-Token' => $csrfToken], $sessionCookie);
     assertHttp("POST /rewards/{id}/redeem canjea premio en cuenta 'vantaggi' y descuenta saldo (240 -> 190 pts)",
         $resRedeemRew['status'] === 200 &&

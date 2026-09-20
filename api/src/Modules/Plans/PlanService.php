@@ -130,8 +130,11 @@ final class PlanService
 
     public function assignPlanToBusiness(int $businessId, int $planId, ?int $actorUserId): void
     {
+        $hasOwnTx = !$this->pdo->inTransaction();
         try {
-            $this->pdo->beginTransaction();
+            if ($hasOwnTx) {
+                $this->pdo->beginTransaction();
+            }
 
             $stmt = $this->pdo->prepare("SELECT `id` FROM `business_plans` WHERE `business_id` = ? FOR UPDATE");
             $stmt->execute([$businessId]);
@@ -154,9 +157,13 @@ final class PlanService
 
             $this->audit->log('business.plan_assigned', 'businesses', $businessId, ['plan_id' => $planId], $actorUserId, $businessId);
 
-            $this->pdo->commit();
+            if ($hasOwnTx) {
+                $this->pdo->commit();
+            }
         } catch (\Throwable $e) {
-            $this->pdo->rollBack();
+            if ($hasOwnTx && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
             throw $e;
         }
     }

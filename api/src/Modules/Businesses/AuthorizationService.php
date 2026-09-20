@@ -60,6 +60,7 @@ final class AuthorizationService
               AND bm.`business_id` = :business_id
               AND bm.`status` = 'active'
               AND b.`status` = 'active'
+              AND b.`terminated_at` IS NULL
             LIMIT 1
         ");
 

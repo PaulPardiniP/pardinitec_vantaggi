@@ -160,6 +160,61 @@ if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/modules$#', $cle
     $businessController->updateModules($request, (int) $matches[1]);
 }
 
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/packages$#', $cleanPath, $matches)) {
+    $businessController->getPackages($request, (int) $matches[1]);
+}
+
+if ($method === 'PUT' && preg_match('#^/api/v1/businesses/(\d+)/packages$#', $cleanPath, $matches)) {
+    $businessController->updatePackage($request, (int) $matches[1]);
+}
+
+// Rutas de Invitaciones para Comercios
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/invitations$#', $cleanPath, $matches)) {
+    $businessController->createInvitation($request, (int) $matches[1]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/invitations$#', $cleanPath, $matches)) {
+    $businessController->listInvitations($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/invitations/(\d+)/resend$#', $cleanPath, $matches)) {
+    $businessController->resendInvitation($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/invitations/(\d+)/cancel$#', $cleanPath, $matches)) {
+    $businessController->cancelInvitation($request, (int) $matches[1], (int) $matches[2]);
+}
+
+// Rutas Públicas de Invitación
+if ($method === 'GET' && $cleanPath === '/api/v1/invitations/validate') {
+    $businessController->validateInvitation($request);
+}
+
+if ($method === 'POST' && $cleanPath === '/api/v1/invitations/accept') {
+    $businessController->acceptInvitation($request);
+}
+
+// Rutas Super Admin: Ciclo de Vida y GDPR para Comercios
+if ($method === 'POST' && preg_match('#^/api/v1/admin/businesses/(\d+)/archive$#', $cleanPath, $matches)) {
+    $businessController->archive($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/admin/businesses/(\d+)/terminate$#', $cleanPath, $matches)) {
+    $businessController->terminate($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/admin/businesses/(\d+)/cancel-termination$#', $cleanPath, $matches)) {
+    $businessController->cancelTermination($request, (int) $matches[1]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/admin/businesses/(\d+)/delete-empty$#', $cleanPath, $matches)) {
+    $businessController->deleteEmpty($request, (int) $matches[1]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/admin/businesses/(\d+)/export$#', $cleanPath, $matches)) {
+    $businessController->exportData($request, (int) $matches[1]);
+}
+
 // Ruta Super Admin: búsqueda paginada de comercios
 if ($method === 'GET' && $cleanPath === '/api/v1/admin/businesses') {
     $businessController->listPaginated($request);
@@ -276,6 +331,10 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/rotate$#', $cleanPath, $matches)) {
     $credentialController->rotate($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/credentials/(\d+)/reveal-link$#', $cleanPath, $matches)) {
+    $credentialController->revealLink($request, (int) $matches[1], (int) $matches[2]);
 }
 
 // Rutas de Puntos y Programas de FidelizaciÃ³n (MÃ³dulo Points)

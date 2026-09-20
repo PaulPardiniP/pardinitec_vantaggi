@@ -185,6 +185,8 @@ $devPdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=pardinitec_vantaggi;cha
 $biz196 = $devPdo->query("SELECT id, name, slug FROM businesses WHERE id = 196")->fetch(PDO::FETCH_ASSOC);
 assertTest($biz196['id'] === 196 && $biz196['name'] === 'Pardinitec', "Comercio ID 196 en desarrollo intacto");
 
+$devPdo->exec("DELETE FROM outbox_events WHERE business_id > 196");
+$devPdo->exec("DELETE FROM business_modules WHERE business_id > 196");
 $devPdo->exec("DELETE FROM businesses WHERE id > 196");
 $devBizCount = $devPdo->query("SELECT COUNT(*) FROM businesses")->fetchColumn();
 assertTest((int)$devBizCount === 196, "Base de desarrollo no contaminada (total exacto: 196 comercios)");

@@ -43,6 +43,38 @@ export const DashboardLayout: React.FC = () => {
     );
   }
 
+  // Se il commercio selezionato è inattivo o terminato, blocca l'accesso al pannello operativo
+  if (activeBusiness && (activeBusiness.status !== 'active' || Boolean(activeBusiness.terminated_at))) {
+    return (
+      <div className="app-container">
+        <header className="navbar">
+          <div className="navbar-brand">
+            <span style={{ fontSize: '1.4rem' }}>💳</span>
+            <span style={{ fontWeight: 800, fontSize: '1.15rem' }}>
+              Pardinitec <span style={{ color: 'var(--color-primary)' }}>Vantaggi</span>
+            </span>
+          </div>
+          <div className="navbar-menu">
+            {isSuperAdmin && (
+              <Link to="/admin/businesses" className="btn btn-outline btn-sm" style={{ marginRight: '0.5rem' }}>
+                ★ Torna a Super Admin
+              </Link>
+            )}
+            <Button variant="secondary" size="sm" onClick={handleLogout}>
+              Esci
+            </Button>
+          </div>
+        </header>
+        <div className="main-content" style={{ marginTop: '3rem' }}>
+          <EmptyState
+            title="Attività non disponibile"
+            description="L'accesso al pannello operativo di questa attività è bloccato perché il commercio risulta inattivo o terminato."
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-container">
       {/* Header Bar */}

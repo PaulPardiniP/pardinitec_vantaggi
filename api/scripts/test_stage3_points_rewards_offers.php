@@ -104,10 +104,12 @@ $bizService = new BusinessService($pdo);
 $bizA = $bizService->createBusiness($ownerAId, [
     'name' => 'Bar Roma ' . $timeSuffix,
     'slug' => 'bar-roma-' . $timeSuffix,
+    'packages' => ['punti' => true, 'vantaggi' => true, 'vip' => true, 'campaigns' => false],
 ]);
 $bizB = $bizService->createBusiness($ownerBId, [
     'name' => 'Caffè Milano ' . $timeSuffix,
     'slug' => 'caffe-milano-' . $timeSuffix,
+    'packages' => ['punti' => true, 'vantaggi' => true, 'vip' => true, 'campaigns' => false],
 ]);
 
 // Agregar Staff a Comercio A

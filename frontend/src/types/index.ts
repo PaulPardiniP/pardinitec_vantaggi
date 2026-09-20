@@ -18,6 +18,31 @@ export interface Business {
   self_registration_enabled: boolean;
   role: string;
   joined_at?: string;
+  is_archived?: boolean;
+  terminated_at?: string | null;
+  scheduled_deletion_at?: string | null;
+}
+
+export interface BusinessInvitation {
+  id: number;
+  business_id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  status: 'pending' | 'accepted' | 'cancelled' | 'expired';
+  expires_at: string;
+  accepted_at: string | null;
+  created_at: string;
+  token?: string;
+  invitation_url?: string;
+}
+
+export interface BusinessPackages {
+  punti: boolean;
+  vantaggi: boolean;
+  vip: boolean;
+  campaigns: boolean;
 }
 
 export interface BusinessModule {
@@ -109,6 +134,7 @@ export interface Credential {
   issued_at: string;
   token?: string;
   public_url?: string;
+  has_recoverable_token?: boolean;
 }
 
 export interface LoyaltyProgram {
@@ -172,6 +198,7 @@ export interface Card {
   profile_name?: string | null;
   profile_code?: string | null;
   design_profile_id: number | null;
+  batch_id?: string | null;
   status: 'inventory' | 'issued' | 'active' | 'suspended' | 'revoked' | 'replaced';
   issued_at: string | null;
   assigned_at: string | null;

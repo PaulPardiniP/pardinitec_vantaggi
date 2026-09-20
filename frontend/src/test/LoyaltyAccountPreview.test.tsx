@@ -103,7 +103,8 @@ describe('LoyaltyAccountPreviewPage - Anteprima Interna Sicura', () => {
     expect(screen.queryByTestId('card-qr-image')).not.toBeInTheDocument();
 
     // Verifica presenza bottoni modali
-    expect(screen.getByText(/Offerte Vantaggi & VIP/)).toBeInTheDocument();
+    expect(screen.getByText(/Offerte Vantaggi/)).toBeInTheDocument();
+    expect(screen.queryByText(/Offerte Vantaggi & VIP/)).not.toBeInTheDocument();
     expect(screen.getByText(/Premi con Punti/)).toBeInTheDocument();
     expect(screen.getByText(/Storico punti/)).toBeInTheDocument();
   });

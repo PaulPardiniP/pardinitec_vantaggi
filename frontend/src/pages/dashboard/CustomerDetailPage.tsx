@@ -46,6 +46,13 @@ export const CustomerDetailPage: React.FC = () => {
   // Visualizzazione QR Credenziale
   const [qrDisplay, setQrDisplay] = useState<{ token: string; profileName: string } | null>(null);
 
+  // Rivelazione e Copia Link Credenziale (AES-256-GCM)
+  const [revealModalCred, setRevealModalCred] = useState<{ credentialId: number; accountName: string } | null>(null);
+  const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
+  const [isRevealing, setIsRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [copiedReveal, setCopiedReveal] = useState(false);
+
   // Nuovo consenso marketing
   const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
   const [consentCheckbox, setConsentCheckbox] = useState(false);
@@ -231,6 +238,40 @@ export const CustomerDetailPage: React.FC = () => {
     } finally {
       setIsRotating(false);
     }
+  };
+
+  // Rivelazione Sicura Link Credenziale (AES-256-GCM)
+  const handleRevealLink = async () => {
+    if (!activeBusiness || !revealModalCred) return;
+    setIsRevealing(true);
+    setRevealError(null);
+    try {
+      const res = await loyaltyApi.revealLink(activeBusiness.id, revealModalCred.credentialId);
+      const fullUrl = new URL(res.public_url, window.location.origin).toString();
+      setRevealedUrl(fullUrl);
+    } catch (err: any) {
+      setRevealError(err.message || 'Impossibile recuperare il link della credenziale.');
+    } finally {
+      setIsRevealing(false);
+    }
+  };
+
+  const handleCopyRevealedUrl = async () => {
+    if (!revealedUrl) return;
+    try {
+      await navigator.clipboard.writeText(revealedUrl);
+      setCopiedReveal(true);
+      setTimeout(() => setCopiedReveal(false), 3000);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleCloseRevealModal = () => {
+    setRevealModalCred(null);
+    setRevealedUrl(null);
+    setRevealError(null);
+    setCopiedReveal(false);
   };
 
   if (isLoading) return <Spinner size="lg" text="Caricamento scheda cliente..." />;
@@ -475,21 +516,47 @@ export const CustomerDetailPage: React.FC = () => {
                           <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
                             Emessa il: {new Date(activeDigitalCred.issued_at).toLocaleString('it-IT')}
                           </div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
-                            Il link originale non è recuperabile in chiaro. Per visualizzare la carta usa l'anteprima sicura. Se il cliente lo ha smarrito, puoi rigenerarlo:
-                          </div>
+                          {activeDigitalCred.has_recoverable_token ? (
+                            <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
+                              Il link fisso della carta è cifrato in modo sicuro e può essere visualizzato o copiato senza alterare la tessera:
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.78rem', color: '#b45309', background: '#fef3c7', padding: '0.45rem 0.65rem', borderRadius: '4px', marginBottom: '0.75rem', fontWeight: 500 }}>
+                              ⚠️ Link non recuperabile: rigenera la credenziale una sola volta.
+                            </div>
+                          )}
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
                             <Link
                               to={`/dashboard/loyalty-accounts/${acc.id}/preview`}
-                              className="btn btn-primary btn-sm"
+                              className="btn btn-outline btn-sm"
                               style={{ textDecoration: 'none' }}
+                              title="Visualizza anteprima carta senza modificare credenziali"
                             >
                               👁 Anteprima carta
                             </Link>
+                            {activeDigitalCred.has_recoverable_token && (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                title="Visualizza e copia il link esistente della carta senza alterarla"
+                                onClick={() => {
+                                  setRevealModalCred({
+                                    credentialId: activeDigitalCred.id,
+                                    accountName: `${customer.first_name} ${customer.last_name} (${acc.profile_name})`,
+                                  });
+                                  setRevealedUrl(null);
+                                  setRevealError(null);
+                                  setCopiedReveal(false);
+                                }}
+                              >
+                                🔗 Visualizza / Copia link
+                              </Button>
+                            )}
                             {canEdit && (
                               <Button
                                 variant="secondary"
                                 size="sm"
+                                title="Invalida il link attuale ed emette un nuovo link in caso di smarrimento o compromissione"
                                 onClick={() => {
                                   setRotateModalError(null);
                                   setCredToRotate({
@@ -737,6 +804,82 @@ export const CustomerDetailPage: React.FC = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modale Rivelazione Link Sicuro (AES-256-GCM) */}
+      <Modal
+        isOpen={revealModalCred !== null}
+        title="Visualizza / Copia Link Carta Digitale"
+        onClose={handleCloseRevealModal}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {revealError && <Alert type="error" message={revealError} onDismiss={() => setRevealError(null)} />}
+
+          {!revealedUrl ? (
+            <div>
+              <p style={{ fontSize: '0.95rem', color: 'var(--color-text)', marginBottom: '1rem' }}>
+                Stai per visualizzare il link della credenziale di <strong>{revealModalCred?.accountName}</strong>.
+              </p>
+              <div style={{ background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.85rem', marginBottom: '1.25rem' }}>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  🔒 <strong>Avviso di Sicurezza:</strong> Questa operazione decifra il token memorizzato con AES-256-GCM. <strong>Non modifica la carta</strong> né altera il saldo o lo stato del cliente. L'accesso verrà registrato nel log di sicurezza (audit).
+                </p>
+              </div>
+              <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <Button variant="outline" onClick={handleCloseRevealModal} disabled={isRevealing}>
+                  Annulla
+                </Button>
+                <Button variant="primary" onClick={handleRevealLink} isLoading={isRevealing}>
+                  Conferma e Visualizza
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ background: '#ecfdf5', border: '1px solid #10b981', borderRadius: 'var(--radius-md)', padding: '0.85rem', marginBottom: '1rem' }}>
+                <span style={{ fontSize: '0.85rem', color: '#065f46', fontWeight: 600 }}>
+                  ✓ Link recuperato con successo. Puoi copiarlo e consegnarlo al cliente.
+                </span>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.4rem' }}>
+                  URL Pubblico della Carta
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={revealedUrl}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.75rem',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-border)',
+                    fontSize: '0.9rem',
+                    fontFamily: 'monospace',
+                    background: '#f1f5f9',
+                    color: '#0f172a',
+                  }}
+                  onFocus={(e) => e.target.select()}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                  Nota: Visualizza/Copia non altera il link né la tessera.
+                </span>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <Button variant="outline" onClick={handleCloseRevealModal}>
+                    Chiudi
+                  </Button>
+                  <Button variant="primary" onClick={handleCopyRevealedUrl}>
+                    {copiedReveal ? '✓ Copiato!' : '📋 Copia Link'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </Modal>
 
       {/* Modale Visualizzazione QR generato/rotato */}

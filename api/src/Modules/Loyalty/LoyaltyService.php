@@ -383,9 +383,15 @@ final class LoyaltyService
         $hasRewards = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'rewards')
             && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'rewards');
         $hasOffers = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'offers')
-            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers');
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'offers')
+            && $profileCode === 'vantaggi';
         $hasVipOffers = $capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')
-            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers');
+            && $capabilityService->isCapabilityAllowedForProfile($cardProfileId, 'vip_offers')
+            && $profileCode === 'vip';
+
+        $availableRewards = $hasRewards ? $rewardService->listRewards($businessId, true, $cardProfileId) : [];
+        $nextReward = ($hasRewards && $hasPoints) ? $rewardService->getNextAvailableReward($businessId, (int) $row['balance'], $cardProfileId) : null;
+        $availableOffers = ($hasOffers || $hasVipOffers) ? $offerService->listOffers($businessId, true, $cardProfileId) : [];
 
         $loyaltyAccountData = [
             'id' => $accountId,
@@ -425,13 +431,15 @@ final class LoyaltyService
             }, $rawTx);
         }
 
-        if ($hasRewards) {
-            $preview['next_reward'] = $rewardService->getNextAvailableReward($businessId, (int) $row['balance'], $cardProfileId);
-            $preview['rewards'] = $rewardService->listRewards($businessId, true, $cardProfileId);
+        if ($hasRewards && !empty($availableRewards)) {
+            if ($nextReward !== null) {
+                $preview['next_reward'] = $nextReward;
+            }
+            $preview['rewards'] = $availableRewards;
         }
 
-        if ($hasOffers || $hasVipOffers) {
-            $preview['offers'] = $offerService->listOffers($businessId, true, $cardProfileId);
+        if (($hasOffers || $hasVipOffers) && !empty($availableOffers)) {
+            $preview['offers'] = $availableOffers;
         }
 
         return $preview;

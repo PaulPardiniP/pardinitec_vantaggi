@@ -129,6 +129,15 @@ final class CardService
             throw new InvalidArgumentException('El tamaño del lote debe estar entre 1 y 500 unidades.');
         }
 
+        $batchId = sprintf(
+            '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0x0fff) | 0x4000,
+            mt_rand(0, 0x3fff) | 0x8000,
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+        );
+
         $this->pdo->beginTransaction();
 
         try {
@@ -140,6 +149,7 @@ final class CardService
                         `business_id`,
                         `loyalty_account_id`,
                         `design_profile_id`,
+                        `batch_id`,
                         `created_by_user_id`,
                         `is_reprogrammable`,
                         `status`,
@@ -149,6 +159,7 @@ final class CardService
                         NULL,
                         NULL,
                         :design_profile_id,
+                        :batch_id,
                         :created_by_user_id,
                         :is_reprogrammable,
                         'inventory',
@@ -158,6 +169,7 @@ final class CardService
                 ");
                 $stmt->execute([
                     'design_profile_id' => $designProfileId,
+                    'batch_id' => $batchId,
                     'created_by_user_id' => $createdByUserId,
                     'is_reprogrammable' => $isReprogrammable ? 1 : 0,
                 ]);
@@ -169,6 +181,7 @@ final class CardService
                     'id' => $cardId,
                     'status' => 'inventory',
                     'design_profile_id' => $designProfileId,
+                    'batch_id' => $batchId,
                     'created_by_user_id' => $createdByUserId,
                     'is_reprogrammable' => $isReprogrammable,
                     'token' => $credential['token'],
@@ -793,6 +806,7 @@ final class CardService
             'business_name' => $row['business_name'] ?? null,
             'loyalty_account_id' => $row['loyalty_account_id'] !== null ? (int) $row['loyalty_account_id'] : null,
             'design_profile_id' => $row['design_profile_id'] !== null ? (int) $row['design_profile_id'] : null,
+            'batch_id' => $row['batch_id'] ?? null,
             'created_by_user_id' => $row['created_by_user_id'] !== null ? (int) $row['created_by_user_id'] : null,
             'assigned_by_user_id' => $row['assigned_by_user_id'] !== null ? (int) $row['assigned_by_user_id'] : null,
             'is_reprogrammable' => isset($row['is_reprogrammable']) ? (bool) $row['is_reprogrammable'] : true,

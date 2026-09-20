@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { pointsApi, businessApi } from '../../api/services';
-import type { BusinessModule } from '../../types';
+import type { BusinessPackages } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Select } from '../../components/common/Select';
@@ -11,7 +11,7 @@ import { Spinner } from '../../components/common/Spinner';
 export const SettingsPage: React.FC = () => {
   const { activeBusiness, hasPermission } = useAuth();
 
-  const [modules, setModules] = useState<BusinessModule[]>([]);
+  const [packages, setPackages] = useState<BusinessPackages | null>(null);
   const [mode, setMode] = useState<'fixed_per_purchase' | 'points_per_amount' | 'manual'>('fixed_per_purchase');
   const [pointsRatio, setPointsRatio] = useState<number>(1.0);
   const [fixedPoints, setFixedPoints] = useState<number>(10);
@@ -35,8 +35,10 @@ export const SettingsPage: React.FC = () => {
       setFixedPoints(prog.fixed_points);
       setDescription(prog.description || '');
 
-      const mods = await businessApi.listModules(activeBusiness.id);
-      setModules(mods);
+      const pkgRes = await businessApi.getPackages(activeBusiness.id);
+      if (pkgRes && pkgRes.packages) {
+        setPackages(pkgRes.packages);
+      }
     } catch {
       // Ignora errori
     } finally {
@@ -151,41 +153,106 @@ export const SettingsPage: React.FC = () => {
           </form>
         </div>
 
-        {/* Moduli e Funzionalità Attive */}
+        {/* Pacchetti Contrattuali */}
         <div className="card">
-          <h2 className="card-title">Moduli & Funzionalità Contrattualizzate</h2>
+          <h2 className="card-title">Pacchetti Contrattuali</h2>
           <p className="page-subtitle" style={{ marginBottom: '1.25rem' }}>
-            Elenco delle capacità abilitate per <strong>{activeBusiness?.name}</strong>. L'attivazione di nuovi moduli è gestita dal Super Admin.
+            Riepilogo dei profili e dei moduli contrattualizzati per <strong>{activeBusiness?.name}</strong>. Eventuali attivazioni o variazioni sono gestite dal Super Admin.
           </p>
 
-          {modules.length === 0 ? (
-            <p className="page-subtitle">Nessun modulo censito.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {modules.map((m) => (
-                <div
-                  key={m.code}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '0.75rem',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                    background: m.is_enabled ? '#ffffff' : '#f8fafc',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{m.name}</div>
-                    {m.description && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{m.description}</div>}
-                  </div>
-                  <span className={`badge ${m.is_enabled ? 'badge-success' : 'badge-warning'}`}>
-                    {m.is_enabled ? 'Attivo' : 'Non attivo'}
-                  </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {/* 1. Profilo Punti */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.85rem 1rem',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: packages?.punti ? '#ffffff' : '#f8fafc',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>🏆 Profilo Punti</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Programma fedeltà basato sull'accumulo punti e catalogo premi riscattabili.
                 </div>
-              ))}
+              </div>
+              <span className={`badge ${packages?.punti ? 'badge-success' : 'badge-danger'}`}>
+                {packages?.punti ? 'Attivo' : 'Non attivo'}
+              </span>
             </div>
-          )}
+
+            {/* 2. Profilo Vantaggi */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.85rem 1rem',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: packages?.vantaggi ? '#ffffff' : '#f8fafc',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>🏷️ Profilo Vantaggi</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Ampliamento di Punti con offerte promozionali, vantaggi diretti e sconti riservati.
+                </div>
+              </div>
+              <span className={`badge ${packages?.vantaggi ? 'badge-success' : 'badge-danger'}`}>
+                {packages?.vantaggi ? 'Attivo' : 'Non attivo'}
+              </span>
+            </div>
+
+            {/* 3. Profilo VIP */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.85rem 1rem',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: packages?.vip ? '#ffffff' : '#f8fafc',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>⭐ Profilo VIP</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Offerte esclusive e privilegi riservati ai clienti con status VIP.
+                </div>
+              </div>
+              <span className={`badge ${packages?.vip ? 'badge-success' : 'badge-danger'}`}>
+                {packages?.vip ? 'Attivo' : 'Non attivo'}
+              </span>
+            </div>
+
+            {/* 4. Campagne di Comunicazione */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.85rem 1rem',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: packages?.campaigns ? '#ffffff' : '#f8fafc',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>📢 Campagne di Comunicazione</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Invio messaggi promozionali diretti, annunci e comunicazioni broadcast ai clienti.
+                </div>
+              </div>
+              <span className={`badge ${packages?.campaigns ? 'badge-success' : 'badge-danger'}`}>
+                {packages?.campaigns ? 'Attivo' : 'Non attivo'}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
