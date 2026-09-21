@@ -14,29 +14,33 @@ export const AdminLayout: React.FC = () => {
 
   return (
     <div className="app-container">
-      <header className="navbar" style={{ borderBottom: '2px solid var(--color-vip)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <Link to="/admin" className="nav-brand">
-            <span style={{ fontSize: '1.5rem' }}>⚙️</span>
-            <span>Pardinitec Vantaggi - Super Admin</span>
-          </Link>
-          <span className="badge badge-vip">Piattaforma Globale</span>
-        </div>
+      <header className="navbar" style={{ borderBottom: '2px solid var(--color-vip)', flexDirection: 'column', alignItems: 'stretch', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <Link to="/admin" className="nav-brand">
+              <span style={{ fontSize: '1.4rem' }}>⚙️</span>
+              <span style={{ fontWeight: 800, fontSize: '1.1rem' }}>Pardinitec Vantaggi</span>
+            </Link>
+            <span className="badge badge-vip">Super Admin</span>
+          </div>
 
-        <div className="nav-actions">
-          {activeBusiness ? (
-            <Link to="/dashboard" className="btn btn-outline btn-sm">
-              ← Vista Commerciante ({activeBusiness.name})
-            </Link>
-          ) : (
-            <Link to="/admin/businesses" className="btn btn-outline btn-sm" title="Seleziona un commercio dall'elenco per operare come esercente">
-              🏪 Seleziona Commercio
-            </Link>
-          )}
-          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{user?.email}</span>
-          <Button variant="secondary" size="sm" onClick={handleLogout}>
-            Esci
-          </Button>
+          <div className="nav-actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+            {activeBusiness ? (
+              <Link to="/dashboard" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                ← Vista Commerciante ({activeBusiness.name})
+              </Link>
+            ) : (
+              <Link to="/admin/businesses" className="btn btn-outline btn-sm" title="Seleziona un commercio dall'elenco per operare come esercente">
+                🏪 Seleziona Commercio
+              </Link>
+            )}
+            <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user?.email}
+            </span>
+            <Button variant="secondary" size="sm" onClick={handleLogout}>
+              Esci
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -46,7 +50,7 @@ export const AdminLayout: React.FC = () => {
             Panoramica
           </NavLink>
           <NavLink to="/admin/businesses" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-            Commerci & Moduli
+            Commerci &amp; Moduli
           </NavLink>
           <NavLink to="/admin/cards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
             Inventario Carte Fisiche

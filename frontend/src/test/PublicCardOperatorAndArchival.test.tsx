@@ -319,7 +319,10 @@ describe('Verifica Funzionalità: Archiviazione, Vantaggio Testuale, Accredito R
           reason: 'Accredito rapido in cassa',
         })
       );
-      expect(screen.getByText(/\+5 punti accreditati con successo/i)).toBeInTheDocument();
+      // Dopo un'operazione riuscita il pannello mostra il messaggio di blocco per escaneo
+      expect(screen.getByTestId('scan-session-locked')).toBeInTheDocument();
+      expect(screen.getByText(/Punti registrati correttamente/i)).toBeInTheDocument();
+      // Il saldo aggiornato è visibile nel display del saldo
       expect(screen.getByText('85')).toBeInTheDocument();
     });
   });

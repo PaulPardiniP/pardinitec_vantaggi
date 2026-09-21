@@ -42,6 +42,16 @@ final class CardService
         return $this->credentialService;
     }
 
+    public function getPhysicalCredentialForCard(int $cardId): ?array
+    {
+        return $this->credentialService->getPhysicalCredentialForCard($cardId);
+    }
+
+    public function getLatestPhysicalCredentialForCard(int $cardId): ?array
+    {
+        return $this->credentialService->getLatestPhysicalCredentialForCard($cardId);
+    }
+
     /**
      * Valida si una transición de estado es conforme a la máquina de estados.
      */
@@ -420,19 +430,24 @@ final class CardService
                 'business_id' => $businessId,
             ]);
 
-            // 4. Rotar / emitir la credencial física para entregar el nuevo token en claro al activar
+            // 4. Tarjeta preprogramada: vincular la credencial física existente a la loyalty_account SIN rotar el token.
+            // Si no existe credencial (caso legacy), emitir una nueva.
             $existingCred = $this->credentialService->getPhysicalCredentialForCard($cardId);
             if ($existingCred) {
-                $newCred = $this->credentialService->rotatePhysicalCredentialForCard($cardId, $businessId, $loyaltyAccountId);
+                // Ruta principal (tarjeta preprogramada): actualizar los vínculos conservando el token permanente
+                $this->credentialService->updatePhysicalCredentialLinks($cardId, $businessId, $loyaltyAccountId);
+                // El token en claro ya fue entregado al programar la tarjeta (createCardInInventory / createBatchInInventory).
+                // No se expone de nuevo aquí para evitar que circulen tokens en logs de activación.
             } else {
-                $newCred = $this->credentialService->issuePhysicalCredential($businessId, $cardId, $loyaltyAccountId);
+                // Ruta legacy: emitir nueva credencial física si nunca existió ninguna
+                $this->credentialService->issuePhysicalCredential($businessId, $cardId, $loyaltyAccountId);
             }
 
             $this->pdo->commit();
 
             $cardData = $this->getBusinessCard($businessId, $cardId);
-            $cardData['token'] = $newCred['token'];
-            $cardData['public_url'] = "/c/{$newCred['token']}";
+            // public_url construida a partir del hash, no del token en claro (que permanece permanente y no se retorna aquí)
+            $cardData['public_url'] = "/c/{token_permanente_en_tarjeta}";
 
             return $cardData;
         } catch (Throwable $e) {
@@ -501,16 +516,14 @@ final class CardService
                 'business_id' => $businessId,
             ]);
 
-            // Revocar credencial previa y emitir una nueva credencial física con nuevo token
-            $this->credentialService->revokePhysicalCredentialForCard($cardId);
-            $newCred = $this->credentialService->issuePhysicalCredential($businessId, $cardId, (int) $card['loyalty_account_id']);
+            // Tarjeta preprogramada: reactivar la credencial suspendida SIN rotar ni reemitir el token.
+            // El token está impreso en la tarjeta física y no debe cambiar al reactivar.
+            $this->credentialService->reactivatePhysicalCredentialForCard($cardId);
 
             $this->pdo->commit();
 
             $cardData = $this->getBusinessCard($businessId, $cardId);
-            $cardData['token'] = $newCred['token'];
-            $cardData['public_url'] = "/c/{$newCred['token']}";
-            $cardData['requires_reprogramming'] = true;
+            // No se incluye 'token' ni 'requires_reprogramming' porque el token permanece idéntico
 
             return $cardData;
         } catch (Throwable $e) {

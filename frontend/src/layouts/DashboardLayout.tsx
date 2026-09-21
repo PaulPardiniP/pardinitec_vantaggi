@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate, Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/common/Button';
@@ -6,6 +6,7 @@ import { EmptyState } from '../components/common/EmptyState';
 
 export const DashboardLayout: React.FC = () => {
   const { user, businesses, activeBusiness, role, isSuperAdmin, switchBusiness, logout, hasModule, hasPermission } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -77,22 +78,39 @@ export const DashboardLayout: React.FC = () => {
 
   return (
     <div className="dashboard-container">
-      {/* Header Bar */}
+      {/* Header Bar responsive */}
       <header className="navbar">
-        <div className="navbar-brand">
-          <Link to="/dashboard" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '1.4rem' }}>💳</span>
-            <span style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '-0.02em' }}>
-              Pardinitec <span style={{ color: 'var(--color-primary)' }}>Vantaggi</span>
-            </span>
-          </Link>
+        <div className="navbar-main-row">
+          <div className="navbar-brand">
+            <Link to="/dashboard" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '1.4rem' }}>💳</span>
+              <span style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '-0.02em' }}>
+                Pardinitec <span style={{ color: 'var(--color-primary)' }}>Vantaggi</span>
+              </span>
+            </Link>
+          </div>
 
+          <div className="navbar-mobile-toggle">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Toggle menu"
+              style={{ fontWeight: 700 }}
+            >
+              {mobileMenuOpen ? '✕ Chiudi' : '☰ Menu'}
+            </button>
+          </div>
+        </div>
+
+        {/* Store selector & user meta */}
+        <div className="navbar-details-row">
           {businesses.length > 1 && (
-            <div style={{ marginLeft: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div className="navbar-store-selector">
               <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Punto vendita:</span>
               <select
                 className="form-control"
-                style={{ width: 'auto', padding: '0.3rem 0.6rem', fontSize: '0.85rem' }}
+                style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.85rem' }}
                 value={activeBusiness?.id || ''}
                 onChange={(e) => switchBusiness(Number(e.target.value))}
                 aria-label="Seleziona punto vendita"
@@ -107,81 +125,84 @@ export const DashboardLayout: React.FC = () => {
           )}
 
           {businesses.length === 1 && activeBusiness && (
-            <span style={{ marginLeft: '1rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-              • <strong>{activeBusiness.name}</strong>
+            <span className="navbar-single-store">
+              🏪 <strong>{activeBusiness.name}</strong>
             </span>
           )}
-        </div>
 
-        <div className="navbar-menu">
-          {isSuperAdmin && (
-            <Link to="/admin" className="btn btn-outline btn-sm" style={{ borderColor: 'var(--color-vip)', color: 'var(--color-vip)' }}>
-              ★ Area Super Admin
-            </Link>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{user?.email}</span>
-            {role && (
-              <span className={`badge ${role === 'owner' ? 'badge-primary' : role === 'manager' ? 'badge-success' : 'badge-warning'}`}>
-                {role}
-              </span>
+          <div className="navbar-user-actions">
+            {isSuperAdmin && (
+              <Link to="/admin" className="btn btn-outline btn-sm" style={{ borderColor: 'var(--color-vip)', color: 'var(--color-vip)', whiteSpace: 'nowrap' }}>
+                ★ Super Admin
+              </Link>
             )}
-          </div>
 
-          <Button variant="secondary" size="sm" onClick={handleLogout}>
-            Esci
-          </Button>
+            <div className="navbar-user-badge">
+              <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px', whiteSpace: 'nowrap' }}>
+                {user?.email}
+              </span>
+              {role && (
+                <span className={`badge ${role === 'owner' ? 'badge-primary' : role === 'manager' ? 'badge-success' : 'badge-warning'}`}>
+                  {role}
+                </span>
+              )}
+            </div>
+
+            <Button variant="secondary" size="sm" onClick={handleLogout}>
+              Esci
+            </Button>
+          </div>
         </div>
       </header>
 
       <div className="main-content">
-        <nav className="tab-nav" aria-label="Navigazione commercio">
-          <NavLink to="/dashboard" end className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+        {/* Navigation Tabs - responsive with mobile toggle support and horizontal swipe */}
+        <nav className={`tab-nav ${mobileMenuOpen ? 'mobile-open' : ''}`} aria-label="Navigazione commercio">
+          <NavLink to="/dashboard" end className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
             Panoramica
           </NavLink>
-          {hasPermission('customer.view') && (
-            <NavLink to="/dashboard/customers" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Clienti
-            </NavLink>
-          )}
-          {hasPermission('points.adjust') && hasModule('points') && (
-            <NavLink to="/dashboard/points" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
-              Accredito punti
-            </NavLink>
-          )}
           {hasPermission('reward.redeem') && hasModule('rewards') && (
-            <NavLink to="/dashboard/rewards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/rewards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Premi con punti
             </NavLink>
           )}
           {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('offers') && (
-            <NavLink to="/dashboard/vantaggi" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/vantaggi" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Vantaggi
             </NavLink>
           )}
           {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('vip_offers') && (
-            <NavLink to="/dashboard/vip" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/vip" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               VIP
             </NavLink>
           )}
+          {hasPermission('points.adjust') && hasModule('points') && (
+            <NavLink to="/dashboard/points" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
+              Accredito punti
+            </NavLink>
+          )}
           {hasPermission('card.assign') && (
-            <NavLink to="/dashboard/cards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/cards" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Carte fisiche
             </NavLink>
           )}
+          {hasPermission('customer.view') && (
+            <NavLink to="/dashboard/customers" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
+              Clienti
+            </NavLink>
+          )}
           {hasPermission('members.view') && (
-            <NavLink to="/dashboard/members" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/members" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Membri
             </NavLink>
           )}
           {hasPermission('campaign.send') && hasModule('campaigns') && (
-            <NavLink to="/dashboard/campaigns" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/campaigns" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Campagne
             </NavLink>
           )}
           {hasPermission('business.view') && (
-            <NavLink to="/dashboard/settings" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`}>
+            <NavLink to="/dashboard/settings" className={({ isActive }) => `tab-btn ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               Impostazioni
             </NavLink>
           )}

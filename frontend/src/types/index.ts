@@ -193,6 +193,7 @@ export interface Offer {
 export interface Card {
   id: number;
   business_id: number | null;
+  business_name?: string | null;
   loyalty_account_id: number | null;
   customer_id?: number | null;
   profile_name?: string | null;
@@ -206,6 +207,8 @@ export interface Card {
   replaced_by_card_id: number | null;
   created_at: string;
   requires_reprogramming?: boolean;
+  token?: string;
+  public_url?: string;
 }
 
 export interface PublicCardView {
@@ -251,4 +254,7 @@ export interface PublicCardView {
   };
   message?: string;
   card_id?: number;
+  can_activate?: boolean;
+  business_id?: number;
+  business_name?: string;
 }

@@ -281,6 +281,24 @@ final class CredentialService
     }
 
     /**
+     * Obtiene la credencial física más reciente asociada a una tarjeta (cualquier estado).
+     */
+    public function getLatestPhysicalCredentialForCard(int $cardId): ?array
+    {
+        $stmt = $this->pdo->prepare("
+            SELECT `id`, `business_id`, `loyalty_account_id`, `card_id`, `type`, `status`, `encrypted_token`, `encryption_iv`, `encryption_tag`, `issued_at`, `revoked_at`, `replaced_by_credential_id`
+            FROM `access_credentials`
+            WHERE `card_id` = :card_id AND `type` = 'physical'
+            ORDER BY `id` DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['card_id' => $cardId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
+    }
+
+    /**
      * Revoca la credencial física de una tarjeta (sin afectar credenciales digitales).
      */
     public function revokePhysicalCredentialForCard(int $cardId): bool
@@ -836,32 +854,44 @@ final class CredentialService
     }
 
     /**
-     * Revela de forma segura el enlace de la tarjeta digital descifrando el token con AES-256-GCM.
+     * Revela de forma segura el enlace de la tarjeta descifrando el token con AES-256-GCM.
      * Solo para usuarios autorizados (Owner/Manager/SuperAdmin).
      * Registra en audit_logs quién reveló el enlace (sin guardar el token ni el secret).
      *
      * @return array{credential_id: int, token: string, public_url: string}
      */
-    public function revealCredentialLink(int $businessId, int $credentialId, int $actorUserId): array
+    public function revealCredentialLink(?int $businessId, int $credentialId, int $actorUserId): array
     {
-        $stmt = $this->pdo->prepare("
-            SELECT `id`, `business_id`, `loyalty_account_id`, `type`, `status`, `encrypted_token`, `encryption_iv`, `encryption_tag`
-            FROM `access_credentials`
-            WHERE `id` = :id AND `business_id` = :business_id
-            LIMIT 1
-        ");
-        $stmt->execute([
-            'id' => $credentialId,
-            'business_id' => $businessId,
-        ]);
+        if ($businessId !== null) {
+            $stmt = $this->pdo->prepare("
+                SELECT `id`, `business_id`, `loyalty_account_id`, `type`, `status`, `encrypted_token`, `encryption_iv`, `encryption_tag`
+                FROM `access_credentials`
+                WHERE `id` = :id AND `business_id` = :business_id
+                LIMIT 1
+            ");
+            $stmt->execute([
+                'id' => $credentialId,
+                'business_id' => $businessId,
+            ]);
+        } else {
+            $stmt = $this->pdo->prepare("
+                SELECT `id`, `business_id`, `loyalty_account_id`, `type`, `status`, `encrypted_token`, `encryption_iv`, `encryption_tag`
+                FROM `access_credentials`
+                WHERE `id` = :id
+                LIMIT 1
+            ");
+            $stmt->execute([
+                'id' => $credentialId,
+            ]);
+        }
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row) {
-            throw new InvalidArgumentException('Credenziale non trovata per questo commercio.');
+            throw new InvalidArgumentException($businessId !== null ? 'Credenziale non trovata per questo commercio.' : 'Credenziale non trovata.');
         }
 
-        if ($row['status'] !== 'active') {
-            throw new InvalidArgumentException('Impossibile recuperare il link di una credenziale non attiva.');
+        if (in_array($row['status'], ['revoked', 'replaced'], true)) {
+            throw new InvalidArgumentException('Impossibile recuperare il link di una credenziale revocata o sostituita.');
         }
 
         if (empty($row['encrypted_token']) || empty($row['encryption_iv']) || empty($row['encryption_tag'])) {
@@ -880,11 +910,11 @@ final class CredentialService
             'access_credentials',
             (int) $row['id'],
             [
-                'loyalty_account_id' => (int) $row['loyalty_account_id'],
+                'loyalty_account_id' => $row['loyalty_account_id'] !== null ? (int) $row['loyalty_account_id'] : null,
                 'credential_type' => (string) $row['type'],
             ],
             $actorUserId,
-            $businessId
+            $row['business_id'] !== null ? (int) $row['business_id'] : null
         );
 
         return [

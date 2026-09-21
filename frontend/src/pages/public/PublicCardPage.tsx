@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
-import { publicCardApi, pointsApi, rewardsApi, offersApi } from '../../api/services';
+import { publicCardApi, pointsApi, rewardsApi, offersApi, cardsApi, customerApi, loyaltyApi, businessApi } from '../../api/services';
 import type { PublicCardView, Reward, Offer } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/common/Button';
@@ -64,6 +64,25 @@ export const PublicCardPage: React.FC = () => {
   const [quickReceiptCalculatedPoints, setQuickReceiptCalculatedPoints] = useState<number | null>(null);
   const [isCalculatingQuickReceipt, setIsCalculatingQuickReceipt] = useState(false);
   const [quickReceiptCalcError, setQuickReceiptCalcError] = useState<string | null>(null);
+
+  // BLOQUEO POR ESCANEO: una sola operazione di accredito per apertura di pagina.
+  // scan_session_id è un UUID generato ONCE per ogni caricamento della pagina (nuovo scan NFC/QR).
+  // Quando scanSessionUsed=true, tutti i controlli di accredito vengono bloccati.
+  // Una nuova apertura (nuovo scan) genera un nuovo UUID e scanSessionUsed=false.
+  const [scanSessionId] = useState<string>(() => crypto.randomUUID());
+  const [scanSessionUsed, setScanSessionUsed] = useState<boolean>(false);
+
+  // PANNELLO DI ATTIVAZIONE RAPIDA (tessera issued + operatore dello stesso negozio)
+  const [activationSearchQuery, setActivationSearchQuery] = useState<string>('');
+  const [activationSearchResults, setActivationSearchResults] = useState<any[]>([]);
+  const [activationSelectedCustomer, setActivationSelectedCustomer] = useState<any | null>(null);
+  const [activationSelectedAccount, setActivationSelectedAccount] = useState<any | null>(null);
+  const [activationCustomerAccounts, setActivationCustomerAccounts] = useState<any[]>([]);
+  const [isActivationSearching, setIsActivationSearching] = useState(false);
+  const [isActivating, setIsActivating] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [businessPackages, setBusinessPackages] = useState<{ punti?: boolean; vantaggi?: boolean; vip?: boolean } | null>(null);
+  const [isCreatingAccount, setIsCreatingAccount] = useState<string | null>(null);
 
   const fetchCard = async (silent = false) => {
     if (!token) return;
@@ -133,13 +152,14 @@ export const PublicCardPage: React.FC = () => {
   // Accredito rapido 1-clic (+1, +5, +10) al banco
   const handleQuickCredit = async (pts: number) => {
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    if (scanSessionUsed) return; // bloqueo por sesión de escaneo
     setIsSubmittingQuickCredit(true);
     setFeedback(null);
     try {
       const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
         points: pts,
         reason: 'Accredito rapido in cassa',
-        operation_id: generateOperationId(),
+        operation_id: `scan_${scanSessionId}`,
       });
       const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
       // Aggiornamento immediato dello stato locale senza ricaricare la pagina
@@ -153,10 +173,8 @@ export const PublicCardPage: React.FC = () => {
           },
         };
       });
-      setFeedback({
-        type: 'success',
-        message: `+${pts} punti accreditati con successo! Nuovo saldo: ${newBal} pt.`,
-      });
+      // BLOQUEO POR ESCANEO: marcar sesión como usada tras operación exitosa
+      setScanSessionUsed(true);
       fetchCard(true);
     } catch (err: any) {
       setFeedback({
@@ -172,6 +190,7 @@ export const PublicCardPage: React.FC = () => {
   const handleQuickCustomSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    if (scanSessionUsed) return;
     const pts = parseInt(quickCustomPoints, 10);
     if (isNaN(pts) || pts <= 0) {
       setFeedback({ type: 'error', message: 'Inserisci un numero positivo di punti.' });
@@ -183,7 +202,7 @@ export const PublicCardPage: React.FC = () => {
       const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
         points: pts,
         reason: 'Accredito punti in cassa (importo manuale)',
-        operation_id: generateOperationId(),
+        operation_id: `scan_${scanSessionId}`,
       });
       const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
       setCardData((prev) => {
@@ -196,11 +215,9 @@ export const PublicCardPage: React.FC = () => {
           },
         };
       });
-      setFeedback({
-        type: 'success',
-        message: `+${pts} punti accreditati con successo! Nuovo saldo: ${newBal} pt.`,
-      });
       setQuickCreditActiveTab(null);
+      // BLOQUEO POR ESCANEO: marcar sesión como usada
+      setScanSessionUsed(true);
       fetchCard(true);
     } catch (err: any) {
       setFeedback({
@@ -216,6 +233,7 @@ export const PublicCardPage: React.FC = () => {
   const handleQuickReceiptSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardData?.business?.id || !cardData?.loyalty_account?.id) return;
+    if (scanSessionUsed) return;
     const amt = parseFloat(quickReceiptAmount);
     if (isNaN(amt) || amt <= 0) {
       setFeedback({ type: 'error', message: 'Inserisci un totale spesa valido maggiore di zero.' });
@@ -231,7 +249,7 @@ export const PublicCardPage: React.FC = () => {
       const res = await pointsApi.adjust(cardData.business.id, cardData.loyalty_account.id, {
         points: quickReceiptCalculatedPoints,
         reason: `Acquisto in cassa per €${amt.toFixed(2)}`,
-        operation_id: generateOperationId(),
+        operation_id: `scan_${scanSessionId}`,
         spent_amount: amt,
       });
       const newBal = res.new_balance !== undefined ? res.new_balance : res.balance;
@@ -245,12 +263,10 @@ export const PublicCardPage: React.FC = () => {
           },
         };
       });
-      setFeedback({
-        type: 'success',
-        message: `+${quickReceiptCalculatedPoints} punti accreditati per una spesa di €${amt.toFixed(2)}! Nuovo saldo: ${newBal} pt.`,
-      });
       setQuickReceiptAmount('');
       setQuickCreditActiveTab(null);
+      // BLOQUEO POR ESCANEO: marcar sesión como usada
+      setScanSessionUsed(true);
       fetchCard(true);
     } catch (err: any) {
       setFeedback({
@@ -274,6 +290,110 @@ export const PublicCardPage: React.FC = () => {
       // mantieni default
     }
   };
+
+  // Carica i pacchetti/moduli abilitati nel commercio per filtrare i conti creabili
+  const loadBusinessPackages = async (bizId: number) => {
+    try {
+      const res = await businessApi.getPackages(bizId);
+      if (res?.packages) {
+        setBusinessPackages({
+          punti: Boolean(res.packages.punti),
+          vantaggi: Boolean(res.packages.vantaggi),
+          vip: Boolean(res.packages.vip),
+        });
+      } else {
+        setBusinessPackages({ punti: true, vantaggi: true, vip: false });
+      }
+    } catch {
+      setBusinessPackages({ punti: true, vantaggi: true, vip: false });
+    }
+  };
+
+  // ATTIVAZIONE RAPIDA AL BANCO: cerca cliente e collega la tessera fisica (issued → active)
+  const handleActivationSearch = async () => {
+    const bizId = (cardData as any).business_id ?? cardData?.business?.id;
+    if (!bizId) return;
+    if (!activationSearchQuery.trim()) return;
+    setIsActivationSearching(true);
+    setActivationError(null);
+    setActivationSearchResults([]);
+    setActivationSelectedCustomer(null);
+    setActivationSelectedAccount(null);
+    try {
+      const res = await customerApi.list(bizId, { search: activationSearchQuery.trim() });
+      setActivationSearchResults(res.data || []);
+    } catch (err: any) {
+      setActivationError(err.message || 'Errore nella ricerca del cliente.');
+    } finally {
+      setIsActivationSearching(false);
+    }
+  };
+
+  const handleActivationSelectCustomer = async (customer: any) => {
+    setActivationSelectedCustomer(customer);
+    setActivationSelectedAccount(null);
+    setActivationCustomerAccounts([]);
+    setActivationError(null);
+    const bizId = (cardData as any).business_id ?? cardData?.business?.id;
+    if (!bizId) return;
+
+    if (!businessPackages) {
+      loadBusinessPackages(bizId);
+    }
+
+    try {
+      const accounts = await loyaltyApi.listAccounts(bizId, customer.id);
+      const activeAccounts = (accounts || []).filter((a: any) => a.status === 'active');
+      setActivationCustomerAccounts(activeAccounts);
+      if (activeAccounts.length === 1) {
+        setActivationSelectedAccount(activeAccounts[0]);
+      }
+    } catch {
+      setActivationCustomerAccounts([]);
+    }
+  };
+
+  const handleCreateAccountForCustomer = async (profileCode: 'punti' | 'vantaggi' | 'vip') => {
+    const bizId = (cardData as any).business_id ?? cardData?.business?.id;
+    if (!bizId || !activationSelectedCustomer?.id) return;
+    setIsCreatingAccount(profileCode);
+    setActivationError(null);
+    try {
+      const newAcc = await loyaltyApi.createAccount(bizId, activationSelectedCustomer.id, profileCode, false);
+      const accObj = newAcc.account || newAcc.data || newAcc;
+      setActivationCustomerAccounts((prev) => {
+        const exists = prev.some((a) => a.id === accObj.id);
+        return exists ? prev : [...prev, accObj];
+      });
+      setActivationSelectedAccount(accObj);
+    } catch (err: any) {
+      setActivationError(err.message || `Errore durante la creazione del conto ${profileCode.toUpperCase()}.`);
+    } finally {
+      setIsCreatingAccount(null);
+    }
+  };
+
+  const handleActivateCard = async () => {
+    const bizId = (cardData as any).business_id ?? cardData?.business?.id;
+    const cardId = cardData?.card_id;
+    if (!bizId || !cardId || !activationSelectedAccount?.id) return;
+    setIsActivating(true);
+    setActivationError(null);
+    try {
+      await cardsApi.activate(bizId, cardId, activationSelectedAccount.id);
+      setFeedback({
+        type: 'success',
+        message: 'Carta associata correttamente. Il link NFC è rimasto invariato.',
+      });
+      // Ricarica la pagina per mostrare la tessera attiva con pannello operativo
+      await fetchCard();
+    } catch (err: any) {
+      setActivationError(err.message || 'Errore durante l\'associazione della carta.');
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
 
   // 1. Azione: Accredito / Rettifica Punti
   const handleAdjustPoints = async (e: React.FormEvent) => {
@@ -438,7 +558,277 @@ export const PublicCardPage: React.FC = () => {
   }
 
   // Stato: Inventario o Non ancora attivata
-  if (cardData.state === 'inventory' || cardData.state === 'issued') {
+  if (cardData.state === 'inventory') {
+    return (
+      <div className="public-card-container">
+        <div className="public-card-box" style={{ padding: '2rem', textAlign: 'center' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📦</div>
+          <h2 style={{ marginBottom: '0.5rem' }}>Carta in Inventario</h2>
+          <p className="page-subtitle">{cardData.message || 'Carta in inventario centrale. Non ancora assegnata a un commercio.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Stato: Assegnata al commercio ma non ancora attivata (tessera fisica "vergine")
+  if (cardData.state === 'issued') {
+    // Operatore del negozio che scansiona la tessera vergine → pannello di attivazione rapida
+    if (cardData.mode === 'staff' && cardData.can_activate) {
+      const bizName = cardData.business_name ?? (cardData as any).business?.name ?? 'questo commercio';
+      return (
+        <div className="public-card-container">
+          <div className="public-card-box" style={{ padding: '2rem' }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>⚡</div>
+              <h2 style={{ marginBottom: '0.25rem', color: '#1e1b4b', fontWeight: 800 }}>Attiva e Associa Carta</h2>
+              <p className="page-subtitle" style={{ marginBottom: 0, color: '#4b5563', fontSize: '0.95rem' }}>
+                La carta possiede già un link permanente per {bizName}. Seleziona il cliente e il profilo da associare.
+              </p>
+            </div>
+
+            {activationError && (
+              <Alert type="error" message={activationError} onDismiss={() => setActivationError(null)} />
+            )}
+
+            {/* Step 1: Cerca cliente */}
+            {!activationSelectedCustomer && (
+              <div data-testid="activation-search-panel">
+                <label style={{ display: 'block', fontWeight: 700, marginBottom: '0.5rem', color: '#111827', fontSize: '1rem' }}>
+                  🔍 Cerca cliente da associare:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <Input
+                    type="text"
+                    placeholder="Nome, cognome, telefono o email..."
+                    value={activationSearchQuery}
+                    onChange={(e) => setActivationSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleActivationSearch(); } }}
+                    style={{ margin: 0, flex: 1, minHeight: '44px', fontSize: '1rem' }}
+                  />
+                  <Button
+                    variant="primary"
+                    size="md"
+                    style={{ minHeight: '44px', minWidth: '90px', fontWeight: 700 }}
+                    isLoading={isActivationSearching}
+                    onClick={handleActivationSearch}
+                  >
+                    Cerca
+                  </Button>
+                </div>
+
+                {activationSearchResults.length > 0 && (
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {activationSearchResults.map((cust: any) => {
+                      return (
+                        <li key={cust.id} style={{ marginBottom: '0.65rem' }}>
+                          <button
+                            type="button"
+                            data-testid={`activation-select-customer-${cust.id}`}
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '0.85rem 1rem',
+                              minHeight: '48px',
+                              border: '1.5px solid #cbd5e1',
+                              borderRadius: 'var(--radius-md)',
+                              background: '#ffffff',
+                              cursor: 'pointer',
+                              color: '#111827',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                            }}
+                            onClick={() => handleActivationSelectCustomer(cust)}
+                          >
+                            <div>
+                              <div style={{ color: '#111827', fontWeight: 700, fontSize: '1.05rem' }}>
+                                👤 {cust.first_name} {cust.last_name}{' '}
+                                <span style={{ color: '#4b5563', fontSize: '0.85rem', fontWeight: 500 }}>
+                                  (ID: #{cust.id})
+                                </span>
+                              </div>
+                              {cust.phone && (
+                                <div style={{ color: '#374151', fontSize: '0.9rem', marginTop: '0.2rem', fontWeight: 500 }}>
+                                  📞 {cust.phone}
+                                </div>
+                              )}
+                              {cust.email && (
+                                <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.1rem' }}>
+                                  ✉️ {cust.email}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ color: '#7c3aed', fontWeight: 700, fontSize: '0.9rem' }}>
+                              Seleziona →
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {activationSearchResults.length === 0 && !isActivationSearching && activationSearchQuery && (
+                  <div
+                    style={{
+                      padding: '1rem',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 'var(--radius-md)',
+                      color: '#334155',
+                      fontSize: '0.95rem',
+                      textAlign: 'center',
+                    }}
+                  >
+                    Nessun cliente trovato. Prova un altro termine di ricerca o verifica i dati inseriti.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 2: Seleziona conto fedeltà e conferma */}
+            {activationSelectedCustomer && (
+              <div data-testid="activation-confirm-panel">
+                <div style={{ background: '#f5f3ff', border: '1.5px solid #d8b4fe', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.25rem' }}>
+                  <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#1e1b4b', marginBottom: '0.25rem' }}>
+                    👤 {activationSelectedCustomer.first_name} {activationSelectedCustomer.last_name}{' '}
+                    <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: 500 }}>(ID: #{activationSelectedCustomer.id})</span>
+                  </div>
+                  {activationSelectedCustomer.phone && (
+                    <div style={{ fontSize: '0.9rem', color: '#374151', fontWeight: 600 }}>📞 {activationSelectedCustomer.phone}</div>
+                  )}
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontWeight: 700, display: 'block', marginBottom: '0.5rem', color: '#111827', fontSize: '0.95rem' }}>
+                    Seleziona conto/profilo da collegare alla carta:
+                  </label>
+                  {activationCustomerAccounts.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                      {activationCustomerAccounts.map((acc: any) => {
+                        const isAccSelected = activationSelectedAccount?.id === acc.id;
+                        const pCode = (acc.profile_code || 'punti').toLowerCase();
+                        const pName = acc.profile_name || (pCode === 'vip' ? 'VIP' : pCode === 'vantaggi' ? 'Vantaggi' : 'Punti');
+                        return (
+                          <button
+                            key={acc.id}
+                            type="button"
+                            onClick={() => setActivationSelectedAccount(acc)}
+                            style={{
+                              textAlign: 'left',
+                              padding: '0.85rem 1rem',
+                              minHeight: '48px',
+                              borderRadius: 'var(--radius-md)',
+                              border: isAccSelected ? '2px solid #7c3aed' : '1.5px solid #cbd5e1',
+                              background: isAccSelected ? '#f5f3ff' : '#ffffff',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            }}
+                          >
+                            <div>
+                              <span style={{ fontWeight: 700, color: '#111827', fontSize: '1rem' }}>
+                                {pCode === 'vip' ? '👑' : pCode === 'vantaggi' ? '🏷️' : '⭐'} Conto {pName}
+                              </span>
+                              {acc.balance !== undefined && (
+                                <span style={{ marginLeft: '0.5rem', color: '#4b5563', fontSize: '0.9rem', fontWeight: 500 }}>
+                                  — Saldo: <strong>{acc.balance} pt</strong>
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontWeight: 700, color: isAccSelected ? '#7c3aed' : '#9ca3af' }}>
+                              {isAccSelected ? '✓ Selezionato' : 'Seleziona'}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '0.75rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)', color: '#92400e', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+                      Il cliente non possiede ancora un conto fedeltà attivo in questo commercio.
+                    </div>
+                  )}
+                </div>
+
+                {/* Creazione rapida conti mancanti abilitati nel commercio */}
+                {(() => {
+                  const hasPuntiAcc = activationCustomerAccounts.some((a) => (a.profile_code || '').toLowerCase() === 'punti');
+                  const hasVantaggiAcc = activationCustomerAccounts.some((a) => (a.profile_code || '').toLowerCase() === 'vantaggi');
+                  const hasVipAcc = activationCustomerAccounts.some((a) => (a.profile_code || '').toLowerCase() === 'vip');
+
+                  const allowPunti = businessPackages ? businessPackages.punti !== false : true;
+                  const allowVantaggi = businessPackages ? businessPackages.vantaggi === true : false;
+                  const allowVip = businessPackages ? businessPackages.vip === true : false;
+
+                  const missingProfiles: Array<{ code: 'punti' | 'vantaggi' | 'vip'; name: string; icon: string }> = [];
+                  if (allowPunti && !hasPuntiAcc) missingProfiles.push({ code: 'punti', name: 'Punti', icon: '⭐' });
+                  if (allowVantaggi && !hasVantaggiAcc) missingProfiles.push({ code: 'vantaggi', name: 'Vantaggi', icon: '🏷️' });
+                  if (allowVip && !hasVipAcc) missingProfiles.push({ code: 'vip', name: 'VIP', icon: '👑' });
+
+                  if (missingProfiles.length === 0) return null;
+
+                  return (
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4b5563', marginBottom: '0.35rem' }}>
+                        Aggiungi un nuovo conto fedeltà per questo cliente:
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        {missingProfiles.map((p) => (
+                          <Button
+                            key={p.code}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            style={{ borderColor: '#7c3aed', color: '#7c3aed', fontWeight: 600 }}
+                            isLoading={isCreatingAccount === p.code}
+                            disabled={Boolean(isCreatingAccount)}
+                            onClick={() => handleCreateAccountForCustomer(p.code)}
+                          >
+                            + Crea conto {p.name}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    style={{ flex: 1, minHeight: '48px', fontSize: '1rem', fontWeight: 700 }}
+                    isLoading={isActivating}
+                    disabled={!activationSelectedAccount}
+                    onClick={handleActivateCard}
+                    data-testid="activation-confirm-btn"
+                  >
+                    ⚡ Associa questa carta a {activationSelectedCustomer.first_name}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    style={{ minHeight: '48px' }}
+                    onClick={() => {
+                      setActivationSelectedCustomer(null);
+                      setActivationSelectedAccount(null);
+                      setActivationCustomerAccounts([]);
+                      setActivationError(null);
+                    }}
+                  >
+                    ← Indietro
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Anónimo o operatore di altro commercio → messaggio generico
     return (
       <div className="public-card-container">
         <div className="public-card-box" style={{ padding: '2rem', textAlign: 'center' }}>
@@ -448,7 +838,7 @@ export const PublicCardPage: React.FC = () => {
           {!isAuthenticated && (
             <div style={{ marginTop: '1.5rem' }}>
               <Link to={`/login?return_to=/c/${token}`} className="btn btn-primary">
-                Accesso Commerciante
+                🔒 Accesso Commerciante
               </Link>
             </div>
           )}
@@ -456,6 +846,7 @@ export const PublicCardPage: React.FC = () => {
       </div>
     );
   }
+
 
   // Stato: Accesso negato / Altro commercio
   if (cardData.state === 'forbidden') {
@@ -653,6 +1044,27 @@ export const PublicCardPage: React.FC = () => {
                   Esercente
                 </span>
               </div>
+
+              {/* BLOQUEO POR ESCANEO: messaggio mostrato dopo operazione riuscita */}
+              {scanSessionUsed ? (
+                <div
+                  data-testid="scan-session-locked"
+                  style={{
+                    background: '#dcfce7',
+                    border: '2px solid #16a34a',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '1rem 1.25rem',
+                    textAlign: 'center',
+                    color: '#166534',
+                    fontWeight: 700,
+                    fontSize: '0.95rem',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  ✅ Punti registrati correttamente. Rimuovi e riavvicina la carta per effettuare una nuova operazione.
+                </div>
+              ) : (
+                <>
 
               {/* Bottoni Tattili Grandi: +1, +5, +10 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
@@ -866,8 +1278,12 @@ export const PublicCardPage: React.FC = () => {
                   ➕ Gestisci Punti
                 </button>
               </div>
+              </>
+              )}
+
             </div>
           )}
+
 
           {/* Azioni Operative Secondarie: Riscatto Premi (se abilitato e presenti) */}
           {isStaff && cardData.actions?.can_redeem_rewards && rewardsCount > 0 && (

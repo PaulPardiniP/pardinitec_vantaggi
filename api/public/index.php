@@ -105,6 +105,10 @@ if ($method === 'POST' && $cleanPath === '/api/v1/admin/cards/assign') {
     $adminCardController->assign($request);
 }
 
+if ($method === 'POST' && preg_match('#^/api/v1/admin/cards/(\\d+)/reveal-link$#', $cleanPath, $matches)) {
+    $adminCardController->revealLink($request, (int) $matches[1]);
+}
+
 if ($method === 'POST' && $cleanPath === '/api/v1/admin/cards') {
     $adminCardController->create($request);
 }

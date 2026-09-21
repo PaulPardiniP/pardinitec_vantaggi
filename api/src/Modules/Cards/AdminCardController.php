@@ -160,4 +160,59 @@ final class AdminCardController
             Response::error('Error al asignar tarjetas al comercio.', 500);
         }
     }
+
+    /**
+     * Super Admin endpoint to reveal permanent NFC URL for a card.
+     */
+    public function revealLink(Request $request, int $cardId): void
+    {
+        $session = $this->authenticateSuperAdmin($request);
+        $this->verifyCsrf($request, $session);
+
+        // Anti-caching headers
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+
+        try {
+            $card = $this->cardService->getCard($cardId);
+            if (!$card) {
+                Response::error('Carta non trovata.', 404);
+            }
+
+            if (in_array($card['status'], ['revoked', 'replaced'], true)) {
+                Response::error('Impossibile programmare o recuperare il link di una carta revocata o sostituita.', 400);
+            }
+
+            $credential = $this->cardService->getLatestPhysicalCredentialForCard($cardId);
+            if (!$credential) {
+                Response::error('Link non recuperabile: nessuna credenziale fisica associata.', 400);
+            }
+
+            if (empty($credential['encrypted_token']) || empty($credential['encryption_iv']) || empty($credential['encryption_tag'])) {
+                Response::error('Link non recuperabile: credenziale legacy senza token cifrato.', 400);
+            }
+
+            $result = $this->cardService->getCredentialService()->revealCredentialLink(
+                null,
+                (int) $credential['id'],
+                (int) $session['user_id']
+            );
+
+            Response::success('Link NFC recuperato con successo.', [
+                'data' => [
+                    'card_id' => $cardId,
+                    'credential_id' => $result['credential_id'],
+                    'token' => $result['token'],
+                    'public_url' => $result['public_url'],
+                    'card_status' => $card['status'],
+                    'business_id' => $card['business_id'],
+                    'business_name' => $card['business_name'] ?? null,
+                ],
+            ], 200);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero del link NFC.', 500);
+        }
+    }
 }

@@ -770,6 +770,32 @@ export const cardsApi = {
     return res.data;
   },
 
+  async revealLink(cardId: number): Promise<{
+    card_id: number;
+    credential_id: number;
+    token: string;
+    public_url: string;
+    card_status: string;
+    business_id?: number | null;
+    business_name?: string | null;
+  }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: {
+        card_id: number;
+        credential_id: number;
+        token: string;
+        public_url: string;
+        card_status: string;
+        business_id?: number | null;
+        business_name?: string | null;
+      };
+    }>(`/api/v1/admin/cards/${cardId}/reveal-link`, {
+      method: 'POST',
+    });
+    return res.data;
+  },
+
   // Business staff/owner
   async listBusinessCards(businessId: number, status?: string): Promise<Card[]> {
     const res = await apiRequest<{ success: boolean; data: Card[] }>(`/api/v1/businesses/${businessId}/cards`, {
