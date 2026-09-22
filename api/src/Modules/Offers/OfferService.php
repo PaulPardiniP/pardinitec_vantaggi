@@ -226,6 +226,12 @@ final class OfferService
     {
         $normalized = $this->validateAndNormalizePayload($data);
 
+        if ($normalized['target_audience'] === 'vip' || $normalized['card_profile_id'] === $this->getProfileIdByCode('vip')) {
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                throw new InvalidArgumentException('Il modulo VIP non è attivo per questo commercio.');
+            }
+        }
+
         $stmt = $this->pdo->prepare("
             INSERT INTO `offers` (
                 `business_id`, `title`, `description`, `offer_type`, `required_capability`,
@@ -270,6 +276,12 @@ final class OfferService
         }
 
         $normalized = $this->validateAndNormalizePayload($data, $existing);
+
+        if ($normalized['target_audience'] === 'vip' || $normalized['card_profile_id'] === $this->getProfileIdByCode('vip')) {
+            if (!$this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers')) {
+                throw new InvalidArgumentException('Il modulo VIP non è attivo per questo commercio.');
+            }
+        }
 
         $stmt = $this->pdo->prepare("
             UPDATE `offers`
@@ -431,12 +443,14 @@ final class OfferService
         $where = ['o.`business_id` = :business_id'];
         $params = ['business_id' => $businessId];
 
-        if ($onlyActive) {
+        if ($statusFilter === 'archived') {
+            $where[] = "o.`status` = 'archived'";
+        } elseif ($statusFilter === 'inactive') {
+            $where[] = "o.`status` = 'inactive'";
+        } elseif ($statusFilter === 'active' || $onlyActive) {
             $where[] = "o.`status` = 'active'";
             $where[] = "(o.`start_date` IS NULL OR o.`start_date` <= UTC_TIMESTAMP())";
             $where[] = "(o.`end_date` IS NULL OR o.`end_date` >= UTC_TIMESTAMP())";
-        } elseif ($statusFilter === 'archived') {
-            $where[] = "o.`status` = 'archived'";
         } else {
             $where[] = "o.`status` != 'archived'";
         }

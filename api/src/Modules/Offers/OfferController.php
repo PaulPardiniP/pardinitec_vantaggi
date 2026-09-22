@@ -72,10 +72,11 @@ final class OfferController
                 Response::error('Nessun pacchetto promozioni o VIP attivo per questo commercio.', 403);
             }
 
-            $onlyActive = $request->getQuery('all') !== '1';
+            $status = $request->getQuery('status');
+            $all = $request->getQuery('all') === '1';
+            $onlyActive = !$all && empty($status);
             $capability = $request->getQuery('capability');
             $targetAudience = $request->getQuery('target_audience');
-            $status = $request->getQuery('status');
 
             $offers = $this->offerService->listOffers(
                 $businessId,

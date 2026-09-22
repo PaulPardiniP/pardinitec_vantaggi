@@ -121,6 +121,10 @@ if ($method === 'GET' && preg_match('#^/api/v1/admin/cards/(\d+)$#', $cleanPath,
     $adminCardController->get($request, (int) $matches[1]);
 }
 
+if ($method === 'DELETE' && preg_match('#^/api/v1/admin/cards/(\d+)$#', $cleanPath, $matches)) {
+    $adminCardController->delete($request, (int) $matches[1]);
+}
+
 // Rutas de Comercios y MembresÃ­as (MÃ³dulo Businesses)
 $businessController = new BusinessController();
 
@@ -224,6 +228,16 @@ if ($method === 'GET' && $cleanPath === '/api/v1/admin/businesses') {
     $businessController->listPaginated($request);
 }
 
+// Ruta Super Admin: verifica password per accesso Vista Commerciante
+if ($method === 'POST' && $cleanPath === '/api/v1/admin/verify-password') {
+    $businessController->verifyAdminPassword($request);
+}
+
+// Ruta Super Admin: log uscita da Vista Commerciante
+if ($method === 'POST' && $cleanPath === '/api/v1/admin/log-impersonate-exit') {
+    $businessController->logImpersonateExit($request);
+}
+
 // Rutas de Tarjetas Físicas del Negocio (Módulo Cards)
 $cardController = new CardController();
 
@@ -257,6 +271,10 @@ if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/cards/(\d+)/rep
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/cards/(\d+)/reassign$#', $cleanPath, $matches)) {
     $cardController->reassign($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/cards/(\d+)/unassign$#', $cleanPath, $matches)) {
+    $cardController->unassign($request, (int) $matches[1], (int) $matches[2]);
 }
 
 // Rutas de Perfiles de FidelizaciÃ³n (MÃ³dulo Loyalty)
@@ -312,6 +330,14 @@ if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/
 
 if ($method === 'POST' && preg_match('#^/api/v1/businesses/(\d+)/customers/(\d+)/loyalty-accounts$#', $cleanPath, $matches)) {
     $loyaltyController->createAccount($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'PATCH' && preg_match('#^/api/v1/businesses/(\d+)/loyalty/accounts/(\d+)/profile$#', $cleanPath, $matches)) {
+    $loyaltyController->changeProfile($request, (int) $matches[1], (int) $matches[2]);
+}
+
+if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty/vip-stats$#', $cleanPath, $matches)) {
+    $loyaltyController->getVipStats($request, (int) $matches[1]);
 }
 
 if ($method === 'GET' && preg_match('#^/api/v1/businesses/(\d+)/loyalty-accounts/(\d+)/preview$#', $cleanPath, $matches)) {

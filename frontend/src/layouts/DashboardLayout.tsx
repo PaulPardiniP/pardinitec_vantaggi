@@ -5,7 +5,7 @@ import { Button } from '../components/common/Button';
 import { EmptyState } from '../components/common/EmptyState';
 
 export const DashboardLayout: React.FC = () => {
-  const { user, businesses, activeBusiness, role, isSuperAdmin, switchBusiness, logout, hasModule, hasPermission } = useAuth();
+  const { user, businesses, activeBusiness, role, isSuperAdmin, switchBusiness, logout, exitMerchantMode, hasModule, hasPermission } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -78,6 +78,52 @@ export const DashboardLayout: React.FC = () => {
 
   return (
     <div className="dashboard-container">
+      {/* Banner Super Admin Modalità Commerciante */}
+      {isSuperAdmin && activeBusiness && (
+        <div
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 1000,
+            backgroundColor: '#0f172a',
+            color: '#f8fafc',
+            padding: '0.65rem 1.25rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '2px solid var(--color-vip, #f59e0b)',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.9rem' }}>
+            <span style={{ fontSize: '1.15rem' }}>🛡️</span>
+            <span>
+              <strong>Modalità Super Admin</strong> — Stai operando nel commercio:{' '}
+              <strong style={{ color: 'var(--color-vip, #f59e0b)' }}>{activeBusiness.name}</strong>
+            </span>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              await exitMerchantMode();
+              navigate('/admin/businesses');
+            }}
+            style={{
+              backgroundColor: '#ffffff',
+              color: '#0f172a',
+              fontWeight: 600,
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            ✕ Esci dalla modalità commerciante
+          </Button>
+        </div>
+      )}
+
       {/* Header Bar responsive */}
       <header className="navbar">
         <div className="navbar-main-row">

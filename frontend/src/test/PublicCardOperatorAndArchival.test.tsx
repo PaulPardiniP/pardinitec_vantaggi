@@ -97,7 +97,7 @@ describe('Verifica Funzionalità: Archiviazione, Vantaggio Testuale, Accredito R
     await waitFor(() => {
       expect(screen.getByText('Caffè Moderno')).toBeInTheDocument();
       expect(screen.getByText(/Offerte Vantaggi \(1\)/i)).toBeInTheDocument();
-      expect(screen.getByText(/Vedi premi \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Premi con punti \(1\)/i)).toBeInTheDocument();
     });
 
     // Apri modale offerte

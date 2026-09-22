@@ -247,4 +247,26 @@ final class CardController
             Response::error('Error al reasignar tarjeta.', 500);
         }
     }
+
+    public function unassign(Request $request, int $businessId, int $cardId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CARD_ASSIGN);
+
+            $result = $this->cardService->unassignCard($businessId, $cardId, (int) $session['user_id']);
+
+            Response::success('Carta disassociata con successo.', [
+                'data' => $result,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la disassociazione della carta.', 500);
+        }
+    }
 }

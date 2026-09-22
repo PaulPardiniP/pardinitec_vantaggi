@@ -42,6 +42,13 @@ vi.mock('../api/services', () => ({
     createAccount: vi.fn(),
     rotateCredential: vi.fn(),
     revealLink: vi.fn(),
+    changeProfile: vi.fn(),
+  },
+  businessApi: {
+    getPackages: vi.fn().mockResolvedValue({
+      packages: { punti: true, vantaggi: true, vip: true, campaigns: true },
+      raw_modules: [],
+    }),
   },
 }));
 
@@ -179,7 +186,7 @@ describe('CustomerDetailPage - Flusso Attivazione / Upgrade Conti (Regola Defini
       expect(screen.getByText(/Mario Rossi/i)).toBeInTheDocument();
     });
 
-    const addVipBtn = screen.getByRole('button', { name: /Crea Conto VIP/i });
+    const addVipBtn = screen.getByRole('button', { name: /Crea (?:profilo|Conto) VIP/i });
     fireEvent.click(addVipBtn);
 
     const modal = screen.getByRole('dialog');
@@ -241,7 +248,7 @@ describe('CustomerDetailPage - Flusso Attivazione / Upgrade Conti (Regola Defini
       expect(screen.getByText(/Mario Rossi/i)).toBeInTheDocument();
     });
 
-    const addVipBtn = screen.getByRole('button', { name: /Crea Conto VIP/i });
+    const addVipBtn = screen.getByRole('button', { name: /Crea (?:profilo|Conto) VIP/i });
     fireEvent.click(addVipBtn);
 
     const modal = screen.getByRole('dialog');

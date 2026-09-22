@@ -21,8 +21,8 @@ final class CardService
     private const VALID_TRANSITIONS = [
         'inventory' => ['issued'],
         'issued' => ['active', 'revoked'],
-        'active' => ['suspended', 'revoked', 'replaced'],
-        'suspended' => ['active', 'revoked', 'replaced'],
+        'active' => ['suspended', 'revoked', 'replaced', 'issued'],
+        'suspended' => ['active', 'revoked', 'replaced', 'issued'],
         'revoked' => [],
         'replaced' => [],
     ];
@@ -803,6 +803,104 @@ final class CardService
                 'url' => "/c/{$newCred['token']}",
                 'requires_reprogramming' => true,
             ];
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Desasocia una tarjeta física de la cuenta de cliente:
+     * - La tarjeta vuelve a estado 'issued' dentro del mismo comercio, con loyalty_account_id = NULL.
+     * - Conserva la cuenta del cliente, su saldo e histórico de movimientos intactos.
+     * - Conserva exactamente el mismo token NFC permanente en la tarjeta (actualiza credencial física a loyalty_account_id = NULL).
+     *
+     * @return array<string, mixed>
+     */
+    public function unassignCard(int $businessId, int $cardId, ?int $userId = null): array
+    {
+        $this->pdo->beginTransaction();
+
+        try {
+            $lockStmt = $this->pdo->prepare("
+                SELECT * FROM `cards`
+                WHERE `id` = :id AND `business_id` = :business_id
+                FOR UPDATE
+            ");
+            $lockStmt->execute(['id' => $cardId, 'business_id' => $businessId]);
+            $card = $lockStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$card) {
+                throw new InvalidArgumentException('Tarjeta no encontrada en este comercio.');
+            }
+
+            if (!in_array($card['status'], ['active', 'suspended'], true) && $card['loyalty_account_id'] === null) {
+                throw new InvalidArgumentException('La tarjeta no se encuentra actualmente asociada a ninguna cuenta.');
+            }
+
+            // Actualizar tarjeta a 'issued' desvinculando la cuenta
+            $stmt = $this->pdo->prepare("
+                UPDATE `cards`
+                SET `status` = 'issued',
+                    `loyalty_account_id` = NULL,
+                    `assigned_by_user_id` = NULL,
+                    `assigned_at` = NULL,
+                    `updated_at` = UTC_TIMESTAMP()
+                WHERE `id` = :id AND `business_id` = :business_id
+            ");
+            $stmt->execute([
+                'id' => $cardId,
+                'business_id' => $businessId,
+            ]);
+
+            // Actualizar credencial física conservando el token permanente
+            $this->credentialService->updatePhysicalCredentialLinks($cardId, $businessId, null);
+
+            $this->pdo->commit();
+
+            return $this->getBusinessCard($businessId, $cardId);
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Eliminación definitiva de una tarjeta de inventario (Super Admin).
+     * Solo permitido si la tarjeta está en estado 'inventory' sin asignar ni histórico.
+     */
+    public function deleteCardFromInventory(int $cardId): array
+    {
+        $this->pdo->beginTransaction();
+
+        try {
+            $stmt = $this->pdo->prepare("SELECT * FROM `cards` WHERE `id` = :id FOR UPDATE");
+            $stmt->execute(['id' => $cardId]);
+            $card = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$card) {
+                throw new InvalidArgumentException('Tarjeta no encontrada.');
+            }
+
+            if ($card['status'] !== 'inventory' || $card['business_id'] !== null || $card['loyalty_account_id'] !== null) {
+                throw new InvalidArgumentException('Solo se pueden eliminar definitivamente tarjetas en inventario sin asignar.');
+            }
+
+            // Eliminar credencial física asociada
+            $delCred = $this->pdo->prepare("DELETE FROM `access_credentials` WHERE `card_id` = :id");
+            $delCred->execute(['id' => $cardId]);
+
+            // Eliminar tarjeta
+            $delCard = $this->pdo->prepare("DELETE FROM `cards` WHERE `id` = :id");
+            $delCard->execute(['id' => $cardId]);
+
+            $this->pdo->commit();
+
+            return ['id' => $cardId, 'deleted' => true];
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();

@@ -30,7 +30,7 @@ export const SettingsPage: React.FC = () => {
     setIsLoading(true);
     try {
       const prog = await pointsApi.getProgram(activeBusiness.id);
-      setMode(prog.mode);
+      setMode(prog.mode || prog.program_type || 'fixed_per_purchase');
       setPointsRatio(prog.points_ratio);
       setFixedPoints(prog.fixed_points);
       setDescription(prog.description || '');

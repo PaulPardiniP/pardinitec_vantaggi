@@ -337,6 +337,25 @@ export const CardsPage: React.FC = () => {
     }
   };
 
+  // 6. Disassociazione carta fisica da conto cliente
+  const handleUnassignCard = async (card: Card) => {
+    if (!activeBusiness) return;
+    if (!window.confirm(`Sei sicuro di voler disassociare la carta #${card.id} dal conto del cliente? La carta tornerà in stato 'Pronta per attivazione' (issued) nello stesso negozio. Il conto del cliente, il saldo punti, lo storico e il token NFC rimarranno inalterati.`)) {
+      return;
+    }
+    setFeedback(null);
+    try {
+      await cardsApi.unassign(activeBusiness.id, card.id);
+      setFeedback({
+        type: 'success',
+        message: `Carta #${card.id} disassociata con successo. Il supporto è ora disponibile per una nuova attivazione mantenendo lo stesso token NFC.`,
+      });
+      await loadCards();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la disassociazione della carta.' });
+    }
+  };
+
   if (isLoading) return <Spinner size="lg" text="Caricamento carte del negozio..." />;
 
   return (
@@ -437,6 +456,12 @@ export const CardsPage: React.FC = () => {
                       {card.status === 'active' && canReassign && (
                         <Button variant="secondary" size="sm" onClick={() => handleOpenReassign(card)}>
                           🔁 Riassegna
+                        </Button>
+                      )}
+
+                      {(card.status === 'active' || card.status === 'suspended') && card.loyalty_account_id && canAssign && (
+                        <Button variant="outline" size="sm" onClick={() => handleUnassignCard(card)}>
+                          🔗 Disassocia
                         </Button>
                       )}
 

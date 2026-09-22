@@ -134,6 +134,8 @@ $staffUserA = $authService->register([
     'name' => 'Staff Biz A',
 ]);
 $bizA = $businessService->createBusiness($ownerUserA['id'], ['name' => "Ristorante Roma {$ts}"]);
+$capService = new \App\Modules\Loyalty\CapabilityService($pdo);
+$capService->applyInitialPackages($bizA['id'], ['punti' => true, 'vantaggi' => true, 'vip' => true]);
 $businessService->addMember($ownerUserA['id'], $bizA['id'], [
     'email' => $staffUserA['email'],
     'role' => Role::STAFF,
@@ -417,7 +419,8 @@ $viewActiveAnon = $credentialService->getPublicCredentialView($newToken);
 assertCardTest("Tarjeta activa abierta por anónimo muestra vista pública mínima sin PII",
     $viewActiveAnon['state'] === 'active' &&
     $viewActiveAnon['mode'] === 'public' &&
-    !isset($viewActiveAnon['customer']) &&
+    !isset($viewActiveAnon['customer']['email']) &&
+    !isset($viewActiveAnon['customer']['phone']) &&
     isset($viewActiveAnon['loyalty_account']['balance'])
 );
 

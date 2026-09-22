@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { customerApi, loyaltyApi } from '../../api/services';
+import { customerApi, loyaltyApi, businessApi } from '../../api/services';
 import type { Customer, CardProfile } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
@@ -32,6 +32,8 @@ export const CustomersPage: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [selectedProfileId, setSelectedProfileId] = useState<number>(1);
+  const [addVipProfile, setAddVipProfile] = useState<boolean>(false);
+  const [isVipModuleAvailable, setIsVipModuleAvailable] = useState<boolean>(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
   const [onboardSubmitting, setOnboardSubmitting] = useState(false);
@@ -39,6 +41,15 @@ export const CustomersPage: React.FC = () => {
 
   // Modale Successo con QR
   const [createdCredential, setCreatedCredential] = useState<{
+    token: string;
+    customerName: string;
+    profileName: string;
+    customerEmail?: string;
+    businessName?: string;
+    customerId?: number;
+  } | null>(null);
+
+  const [pendingVipCredential, setPendingVipCredential] = useState<{
     token: string;
     customerName: string;
     profileName: string;
@@ -70,10 +81,26 @@ export const CustomersPage: React.FC = () => {
   };
 
   const fetchProfiles = async () => {
+    if (!activeBusiness) return;
     try {
-      const list = await loyaltyApi.listProfiles();
-      setProfiles(list);
-      if (list.length > 0) setSelectedProfileId(list[0].id);
+      const [list, pkgRes] = await Promise.all([
+        loyaltyApi.listProfiles(),
+        businessApi.getPackages(activeBusiness.id).catch(() => null),
+      ]);
+      const pkgs = pkgRes?.packages;
+      const vipContracted = pkgs ? pkgs.vip === true : true;
+      setIsVipModuleAvailable(vipContracted);
+
+      // Profilo standard: Punti o Vantaggi (esclude VIP dal selettore standard)
+      const standardList = list.filter((p) => {
+        const code = p.code.toLowerCase();
+        if (code === 'punti') return !pkgs || pkgs.punti !== false || pkgs.vantaggi === true;
+        if (code === 'vantaggi') return !pkgs || pkgs.vantaggi === true;
+        return false;
+      });
+
+      setProfiles(standardList);
+      if (standardList.length > 0) setSelectedProfileId(standardList[0].id);
     } catch {
       // profili opzionali
     }
@@ -107,6 +134,7 @@ export const CustomersPage: React.FC = () => {
         phone: phone.trim() || undefined,
         email: email.trim() || undefined,
         card_profile_id: selectedProfileId,
+        include_vip: addVipProfile,
         privacy_accepted: privacyAccepted,
         marketing_accepted: marketingAccepted,
       });
@@ -118,6 +146,7 @@ export const CustomersPage: React.FC = () => {
       setPhone('');
       const customerEmailVal = email.trim() || undefined;
       setEmail('');
+      setAddVipProfile(false);
       setPrivacyAccepted(false);
       setMarketingAccepted(false);
 
@@ -131,6 +160,19 @@ export const CustomersPage: React.FC = () => {
         businessName: activeBusiness.name,
         customerId: res.customer.id,
       });
+
+      if (res.vip_token) {
+        setPendingVipCredential({
+          token: res.vip_token,
+          customerName: `${res.customer.first_name} ${res.customer.last_name}`,
+          profileName: 'VIP',
+          customerEmail: customerEmailVal,
+          businessName: activeBusiness.name,
+          customerId: res.customer.id,
+        });
+      } else {
+        setPendingVipCredential(null);
+      }
 
       await fetchCustomers(1);
     } catch (err: any) {
@@ -204,6 +246,7 @@ export const CustomersPage: React.FC = () => {
                 <tr>
                   <th>ID</th>
                   <th>Nominativo</th>
+                  <th>Profilo</th>
                   <th>Telefono</th>
                   <th>Email</th>
                   <th>Registrato il</th>
@@ -219,12 +262,44 @@ export const CustomersPage: React.FC = () => {
                         {c.first_name} {c.last_name}
                       </strong>
                     </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                        {(c.profiles ?? []).map((code) => {
+                          const upper = code.toUpperCase();
+                          let bg = '#f3f4f6', color = '#374151', border = '#d1d5db';
+                          if (code === 'punti') { bg = '#fff7ed'; color = '#c2410c'; border = '#fed7aa'; }
+                          else if (code === 'vantaggi') { bg = '#eff6ff'; color = '#1d4ed8'; border = '#bfdbfe'; }
+                          else if (code === 'vip') { bg = '#0f172a'; color = '#f8fafc'; border = '#334155'; }
+                          return (
+                            <span
+                              key={code}
+                              style={{
+                                display: 'inline-block',
+                                padding: '0.1rem 0.5rem',
+                                borderRadius: '999px',
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                                letterSpacing: '0.04em',
+                                background: bg,
+                                color,
+                                border: `1px solid ${border}`,
+                              }}
+                            >
+                              {upper}
+                            </span>
+                          );
+                        })}
+                        {(!c.profiles || c.profiles.length === 0) && (
+                          <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>
+                        )}
+                      </div>
+                    </td>
                     <td>{c.phone || '—'}</td>
                     <td>{c.email || '—'}</td>
                     <td>{new Date(c.created_at).toLocaleDateString('it-IT')}</td>
                     <td style={{ textAlign: 'right' }}>
                       <Link to={`/dashboard/customers/${c.id}`} className="btn btn-outline btn-sm">
-                        Dettagli & Conti →
+                        Dettagli &amp; Conti →
                       </Link>
                     </td>
                   </tr>
@@ -264,14 +339,29 @@ export const CustomersPage: React.FC = () => {
           <Input label="Telefono (opzionale)" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+39 340 0000000" />
           <Input label="Email (opzionale)" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@esempio.it" />
 
-          {profiles.length > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
             <Select
-              label="Profilo Iniziale di Fidelizzazione *"
+              label="Profilo standard *"
               options={profiles.map((p) => ({ label: `${p.name} (${p.code.toUpperCase()})`, value: p.id }))}
               value={selectedProfileId}
               onChange={(e) => setSelectedProfileId(Number(e.target.value))}
             />
-          )}
+
+            {isVipModuleAvailable && (
+              <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1.5px solid #e2e8f0' }}>
+                <label className="form-checkbox" style={{ margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={addVipProfile}
+                    onChange={(e) => setAddVipProfile(e.target.checked)}
+                  />
+                  <span style={{ fontSize: '0.9rem', color: '#0f172a' }}>
+                    👑 <strong>Aggiungi anche un profilo VIP</strong> (crea un conto VIP separato con credenziale e carta digitale indipendente)
+                  </span>
+                </label>
+              </div>
+            )}
+          </div>
 
           <div style={{ margin: '1.25rem 0', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <label className="form-checkbox">
@@ -309,11 +399,17 @@ export const CustomersPage: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Modale QR Credenziale creata */}
+      {/* Modale QR Credenziale creata (Standard) */}
       {createdCredential && (
         <QrModal
           isOpen={Boolean(createdCredential)}
-          onClose={() => setCreatedCredential(null)}
+          onClose={() => {
+            setCreatedCredential(null);
+            if (pendingVipCredential) {
+              setCreatedCredential(pendingVipCredential);
+              setPendingVipCredential(null);
+            }
+          }}
           token={createdCredential.token}
           customerName={createdCredential.customerName}
           profileName={createdCredential.profileName}

@@ -57,6 +57,9 @@ final class BusinessController
 
             Response::success('Comercio creado exitosamente.', [
                 'data' => $business,
+                'business' => $business,
+                'invitation_url' => $business['invitation']['invitation_url'] ?? null,
+                'invitation' => $business['invitation'] ?? null,
             ], 201);
         } catch (ValidationException $e) {
             Response::error($e->getMessage(), 422, $e->getErrors());
@@ -597,6 +600,95 @@ final class BusinessController
             Response::error($e->getMessage(), 404);
         } catch (Throwable $e) {
             Response::error('Errore durante l\'esportazione dei dati: ' . $e->getMessage(), 500);
+        }
+    }
+
+    public function verifyAdminPassword(Request $request): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        if (!$this->businessService->getAuthorizationService()->isSuperAdmin((int) $session['user_id'])) {
+            Response::error('Accesso riservato esclusivamente a Super Admin.', 403);
+        }
+
+        try {
+            $body = $request->getJsonBody();
+            $password = (string) ($body['password'] ?? '');
+            $businessId = (int) ($body['business_id'] ?? 0);
+
+            if ($password === '') {
+                Response::error('Password obbligatoria.', 422, ['password' => 'Inserisci la password di Super Admin.']);
+            }
+
+            if ($businessId <= 0) {
+                Response::error('ID commercio non valido.', 422);
+            }
+
+            $pdo = \App\Core\Database\Connection::get();
+            $stmt = $pdo->prepare("SELECT `password_hash` FROM `users` WHERE `id` = :id LIMIT 1");
+            $stmt->execute(['id' => $session['user_id']]);
+            $hash = (string) $stmt->fetchColumn();
+
+            $hasher = new \App\Core\Security\PasswordHasher();
+            if (!$hasher->verify($password, $hash)) {
+                Response::error('Password non corretta.', 401);
+            }
+
+            $bizStmt = $pdo->prepare("SELECT `id`, `name`, `slug`, `status` FROM `businesses` WHERE `id` = :id LIMIT 1");
+            $bizStmt->execute(['id' => $businessId]);
+            $biz = $bizStmt->fetch(\PDO::FETCH_ASSOC);
+
+            if (!$biz) {
+                Response::error('Commercio non trovato.', 404);
+            }
+
+            $audit = new \App\Core\Audit\AuditLogger($pdo);
+            $audit->log('admin.impersonate_start', 'businesses', $businessId, [
+                'business_name' => $biz['name'],
+                'action' => 'super_admin_impersonate_start',
+            ], (int) $session['user_id'], $businessId);
+
+            Response::success('Accesso autorizzato.', [
+                'data' => [
+                    'business' => [
+                        'id' => (int) $biz['id'],
+                        'name' => (string) $biz['name'],
+                        'slug' => (string) $biz['slug'],
+                        'status' => (string) $biz['status'],
+                    ],
+                    'verified' => true,
+                ],
+            ], 200);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la verifica della password.', 500);
+        }
+    }
+
+    public function logImpersonateExit(Request $request): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        if (!$this->businessService->getAuthorizationService()->isSuperAdmin((int) $session['user_id'])) {
+            Response::error('Accesso riservato esclusivamente a Super Admin.', 403);
+        }
+
+        try {
+            $body = $request->getJsonBody();
+            $businessId = (int) ($body['business_id'] ?? 0);
+
+            if ($businessId > 0) {
+                $pdo = \App\Core\Database\Connection::get();
+                $audit = new \App\Core\Audit\AuditLogger($pdo);
+                $audit->log('admin.impersonate_end', 'businesses', $businessId, [
+                    'action' => 'super_admin_impersonate_end',
+                ], (int) $session['user_id'], $businessId);
+            }
+
+            Response::success('Uscita registrata.', ['data' => ['ok' => true]], 200);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la registrazione dell\'uscita.', 500);
         }
     }
 }

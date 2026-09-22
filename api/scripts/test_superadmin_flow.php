@@ -350,9 +350,14 @@ $bizExistingRes = $bizService->createBusiness($saId, [
     'owner_email' => $existingUserEmail,
 ]);
 $bizExistingId = (int) $bizExistingRes['id'];
+assertCondition(!empty($bizExistingRes['invitation']), "Invito generato anche per utente con email già presente in users");
+$existingToken = $bizExistingRes['invitation']['token'] ?? '';
+$acceptedExisting = $bizService->acceptInvitation($existingToken, 'PasswordEsistente1!');
+assertCondition($acceptedExisting['role'] === 'owner', "Titolare esistente ha accettato l'invito inserendo la propria password");
+
 $existingMemStmt = $pdo->prepare("SELECT bm.`role` FROM `users` u INNER JOIN `business_memberships` bm ON u.`id` = bm.`user_id` WHERE u.`email` = :email AND bm.`business_id` = :biz_id");
 $existingMemStmt->execute(['email' => $existingUserEmail, 'biz_id' => $bizExistingId]);
-assertCondition($existingMemStmt->fetchColumn() === 'owner', "Utente già esistente associato direttamente con ruolo 'owner' senza token");
+assertCondition($existingMemStmt->fetchColumn() === 'owner', "Utente già esistente associato con ruolo 'owner' dopo l'accettazione dell'invito");
 
 // ==========================================
 // 4. CICLO DI VITA E GDPR (ARCHIVIAZIONE, TERMINAZIONE, ELIMINAZIONE)

@@ -119,78 +119,64 @@ final class BusinessService
             $invitationData = null;
 
             if ($ownerEmail !== '') {
-                // Comprobar si el usuario ya existe
-                $uStmt = $this->pdo->prepare("SELECT `id`, `name`, `email` FROM `users` WHERE `email` = :email LIMIT 1");
-                $uStmt->execute(['email' => $ownerEmail]);
-                $existingUser = $uStmt->fetch(PDO::FETCH_ASSOC);
-
-                if ($existingUser) {
-                    $ownerUserId = (int) $existingUser['id'];
-                    $memberStmt = $this->pdo->prepare("
-                        INSERT INTO `business_memberships` (`business_id`, `user_id`, `role`, `status`, `created_at`, `updated_at`)
-                        VALUES (:business_id, :user_id, :role, 'active', UTC_TIMESTAMP(), UTC_TIMESTAMP())
-                        ON DUPLICATE KEY UPDATE `role` = :role_upd, `status` = 'active', `updated_at` = UTC_TIMESTAMP()
-                    ");
-                    $memberStmt->execute([
-                        'business_id' => $businessId,
-                        'user_id' => $ownerUserId,
-                        'role' => Role::OWNER,
-                        'role_upd' => Role::OWNER,
+                if (!filter_var($ownerEmail, FILTER_VALIDATE_EMAIL)) {
+                    throw new ValidationException('Email del titolare non valida.', [
+                        'owner_email' => 'L\'indirizzo email del titolare non è valido.',
                     ]);
-                } else {
-                    // Crear invitación pendiente
-                    $plainToken = bin2hex(random_bytes(32));
-                    $tokenHash = hash('sha256', $plainToken);
-                    $expiresAt = gmdate('Y-m-d H:i:s', time() + (7 * 86400)); // 7 días
-
-                    $invStmt = $this->pdo->prepare("
-                        INSERT INTO `business_invitations` (
-                            `business_id`, `email`, `first_name`, `last_name`, `role`, `token_hash`, `status`, `expires_at`, `created_by_user_id`, `created_at`, `updated_at`
-                        ) VALUES (
-                            :business_id, :email, :first_name, :last_name, 'owner', :token_hash, 'pending', :expires_at, :created_by_user_id, UTC_TIMESTAMP(), UTC_TIMESTAMP()
-                        )
-                    ");
-                    $invStmt->execute([
-                        'business_id' => $businessId,
-                        'email' => $ownerEmail,
-                        'first_name' => $ownerFirstName !== '' ? $ownerFirstName : 'Proprietario',
-                        'last_name' => $ownerLastName !== '' ? $ownerLastName : $name,
-                        'token_hash' => $tokenHash,
-                        'expires_at' => $expiresAt,
-                        'created_by_user_id' => $userId,
-                    ]);
-                    $invId = (int) $this->pdo->lastInsertId();
-
-                    // Registrar evento en outbox_events para envío seguro de invitación
-                    $outboxPayload = json_encode([
-                        'invitation_id' => $invId,
-                        'business_id' => $businessId,
-                        'business_name' => $name,
-                        'email' => $ownerEmail,
-                        'first_name' => $ownerFirstName,
-                        'last_name' => $ownerLastName,
-                        'role' => 'owner',
-                        'invitation_url' => "/invitations/{$plainToken}",
-                        'expires_at' => $expiresAt,
-                    ]);
-                    $outboxStmt = $this->pdo->prepare("
-                        INSERT INTO `outbox_events` (`business_id`, `event_type`, `payload`, `status`, `created_at`, `updated_at`)
-                        VALUES (:business_id, 'owner.invitation', :payload, 'pending', UTC_TIMESTAMP(), UTC_TIMESTAMP())
-                    ");
-                    $outboxStmt->execute([
-                        'business_id' => $businessId,
-                        'payload' => $outboxPayload,
-                    ]);
-
-                    $invitationData = [
-                        'id' => $invId,
-                        'email' => $ownerEmail,
-                        'status' => 'pending',
-                        'token' => $plainToken, // Entregado por única vez para testing o dev
-                        'invitation_url' => "/invitations/{$plainToken}",
-                        'expires_at' => $expiresAt,
-                    ];
                 }
+
+                // Generare sempre un invito valido 7 giorni per il titolare
+                $plainToken = bin2hex(random_bytes(32));
+                $tokenHash = hash('sha256', $plainToken);
+                $expiresAt = gmdate('Y-m-d H:i:s', time() + (7 * 86400)); // 7 giorni
+
+                $invStmt = $this->pdo->prepare("
+                    INSERT INTO `business_invitations` (
+                        `business_id`, `email`, `first_name`, `last_name`, `role`, `token_hash`, `status`, `expires_at`, `created_by_user_id`, `created_at`, `updated_at`
+                    ) VALUES (
+                        :business_id, :email, :first_name, :last_name, 'owner', :token_hash, 'pending', :expires_at, :created_by_user_id, UTC_TIMESTAMP(), UTC_TIMESTAMP()
+                    )
+                ");
+                $invStmt->execute([
+                    'business_id' => $businessId,
+                    'email' => $ownerEmail,
+                    'first_name' => $ownerFirstName !== '' ? $ownerFirstName : 'Proprietario',
+                    'last_name' => $ownerLastName !== '' ? $ownerLastName : $name,
+                    'token_hash' => $tokenHash,
+                    'expires_at' => $expiresAt,
+                    'created_by_user_id' => $userId,
+                ]);
+                $invId = (int) $this->pdo->lastInsertId();
+
+                // Registrar evento en outbox_events para envío seguro de invitación
+                $outboxPayload = json_encode([
+                    'invitation_id' => $invId,
+                    'business_id' => $businessId,
+                    'business_name' => $name,
+                    'email' => $ownerEmail,
+                    'first_name' => $ownerFirstName !== '' ? $ownerFirstName : 'Proprietario',
+                    'last_name' => $ownerLastName !== '' ? $ownerLastName : $name,
+                    'role' => 'owner',
+                    'invitation_url' => "/invitations/{$plainToken}",
+                    'expires_at' => $expiresAt,
+                ]);
+                $outboxStmt = $this->pdo->prepare("
+                    INSERT INTO `outbox_events` (`business_id`, `event_type`, `payload`, `status`, `created_at`, `updated_at`)
+                    VALUES (:business_id, 'owner.invitation', :payload, 'pending', UTC_TIMESTAMP(), UTC_TIMESTAMP())
+                ");
+                $outboxStmt->execute([
+                    'business_id' => $businessId,
+                    'payload' => $outboxPayload,
+                ]);
+
+                $invitationData = [
+                    'id' => $invId,
+                    'email' => $ownerEmail,
+                    'status' => 'pending',
+                    'token' => $plainToken,
+                    'invitation_url' => "/invitations/{$plainToken}",
+                    'expires_at' => $expiresAt,
+                ];
             } else {
                 // Modo legado: asignar al creador como 'owner'
                 $memberStmt = $this->pdo->prepare("
@@ -220,6 +206,7 @@ final class BusinessService
                 'self_registration_enabled' => (bool) $selfReg,
                 'packages' => $capService->getBusinessPackages($businessId),
                 'invitation' => $invitationData,
+                'invitation_url' => $invitationData['invitation_url'] ?? null,
             ];
         } catch (\Throwable $e) {
             if ($this->pdo->inTransaction()) {

@@ -284,6 +284,20 @@ export const AdminCardsPage: React.FC = () => {
     copyToClipboard(lines.join('\n'), 'all');
   };
 
+  const handleDeleteCard = async (cardId: number) => {
+    if (!window.confirm(`Sei sicuro di voler eliminare definitivamente la carta #${cardId} dall'inventario? L'azione è consentita solo per carte mai assegnate e prive di storico.`)) {
+      return;
+    }
+    setFeedback(null);
+    try {
+      await cardsApi.delete(cardId);
+      setFeedback({ type: 'success', message: `Carta #${cardId} eliminata definitivamente dall'inventario.` });
+      await loadCards(page);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante l\'eliminazione della carta.' });
+    }
+  };
+
   if (isLoading) return <Spinner size="lg" text="Caricamento inventario globale carte..." />;
 
   const isAllPageSelected =
@@ -467,14 +481,27 @@ export const AdminCardsPage: React.FC = () => {
                       {isRevokedOrReplaced ? (
                         <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Non programmabile</span>
                       ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRevealCard(c)}
-                          style={{ fontSize: '0.78rem', padding: '0.25rem 0.55rem' }}
-                        >
-                          🔗 Visualizza / Copia URL
-                        </Button>
+                        <div style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRevealCard(c)}
+                            style={{ fontSize: '0.78rem', padding: '0.25rem 0.55rem' }}
+                          >
+                            🔗 Visualizza / Copia URL
+                          </Button>
+                          {isInventory && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => handleDeleteCard(c.id)}
+                              style={{ fontSize: '0.78rem', padding: '0.25rem 0.55rem' }}
+                              title="Elimina definitivamente la carta dall'inventario"
+                            >
+                              🗑
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td>

@@ -215,4 +215,20 @@ final class AdminCardController
             Response::error('Errore durante il recupero del link NFC.', 500);
         }
     }
+
+    public function delete(Request $request, int $cardId): void
+    {
+        $session = $this->authenticateSuperAdmin($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->cardService->deleteCardFromInventory($cardId);
+
+            Response::success('Carta eliminata con successo dall\'inventario.', null, 200);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante l\'eliminazione della carta.', 500);
+        }
+    }
 }

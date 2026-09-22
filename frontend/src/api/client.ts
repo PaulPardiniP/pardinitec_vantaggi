@@ -98,6 +98,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestOpti
       method,
       headers,
       credentials: 'include', // Obbligatorio per cookie di sessione
+      cache: 'no-store',
     });
   } catch (netErr: any) {
     throw new ApiError(netErr.message || 'Errore di connessione al server', 0);

@@ -68,15 +68,15 @@ export const OverviewPage: React.FC = () => {
       <div className="overview-grid">
         {/* 1. Premi con punti */}
         {hasPermission('reward.redeem') && hasModule('rewards') && (
-          <div className="overview-card">
+          <div className="overview-card" style={{ background: '#fff7ed', border: '1.5px solid #fed7aa', borderLeft: '4px solid #ea580c' }}>
             <div>
               <div className="overview-card-header">
-                <div className="overview-card-icon" style={{ background: '#fce7f3', color: '#db2777' }}>
+                <div className="overview-card-icon" style={{ background: '#ffedd5', color: '#ea580c' }}>
                   🎁
                 </div>
-                <h2 className="overview-card-title">Premi con punti</h2>
+                <h2 className="overview-card-title" style={{ color: '#9a3412' }}>Premi con punti</h2>
               </div>
-              <p className="overview-card-desc">
+              <p className="overview-card-desc" style={{ color: '#7c2d12' }}>
                 Configura il catalogo premi e gestisci il riscatto rapido in cassa tramite i punti accumulati.
               </p>
             </div>
@@ -84,7 +84,7 @@ export const OverviewPage: React.FC = () => {
               <Link
                 to="/dashboard/rewards"
                 className="btn btn-outline"
-                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, borderColor: '#db2777', color: '#be185d' }}
+                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, borderColor: '#ea580c', color: '#c2410c' }}
               >
                 Premi con punti →
               </Link>
@@ -94,15 +94,15 @@ export const OverviewPage: React.FC = () => {
 
         {/* 2. Vantaggi */}
         {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('offers') && (
-          <div className="overview-card">
+          <div className="overview-card" style={{ background: '#eff6ff', border: '1.5px solid #bfdbfe', borderLeft: '4px solid #2563eb' }}>
             <div>
               <div className="overview-card-header">
                 <div className="overview-card-icon" style={{ background: '#dbeafe', color: '#2563eb' }}>
                   🏷️
                 </div>
-                <h2 className="overview-card-title">Vantaggi</h2>
+                <h2 className="overview-card-title" style={{ color: '#1e3a8a' }}>Vantaggi</h2>
               </div>
-              <p className="overview-card-desc">
+              <p className="overview-card-desc" style={{ color: '#1e40af' }}>
                 Crea sconti esclusivi, coupon e promozioni riservati ai clienti titolari del profilo Vantaggi.
               </p>
             </div>
@@ -120,15 +120,15 @@ export const OverviewPage: React.FC = () => {
 
         {/* 3. VIP */}
         {(hasPermission('offer.manage') || hasPermission('offer.redeem')) && hasModule('vip_offers') && (
-          <div className="overview-card" style={{ border: '1.5px solid #fde68a', borderLeft: '4px solid #d97706', background: '#fffbeb' }}>
+          <div className="overview-card" style={{ background: '#0f172a', border: '1.5px solid #334155' }}>
             <div>
               <div className="overview-card-header">
-                <div className="overview-card-icon" style={{ background: '#fef3c7', color: '#d97706' }}>
+                <div className="overview-card-icon" style={{ background: '#1e293b', color: '#f8fafc' }}>
                   👑
                 </div>
-                <h2 className="overview-card-title" style={{ color: '#78350f' }}>VIP</h2>
+                <h2 className="overview-card-title" style={{ color: '#f8fafc' }}>VIP</h2>
               </div>
-              <p className="overview-card-desc" style={{ color: '#92400e' }}>
+              <p className="overview-card-desc" style={{ color: '#94a3b8' }}>
                 Offerte dedicate, vantaggi premium ed esperienze speciali riservate ai clienti VIP più fedeli.
               </p>
             </div>
@@ -136,7 +136,7 @@ export const OverviewPage: React.FC = () => {
               <Link
                 to="/dashboard/vip"
                 className="btn"
-                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, background: '#d97706', color: '#ffffff', textDecoration: 'none' }}
+                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, background: '#475569', color: '#f8fafc', textDecoration: 'none' }}
               >
                 Gestisci VIP →
               </Link>
@@ -146,15 +146,15 @@ export const OverviewPage: React.FC = () => {
 
         {/* 4. Carte fisiche */}
         {hasPermission('card.assign') && (
-          <div className="overview-card">
+          <div className="overview-card" style={{ background: '#e2e8f0', border: '1.5px solid #94a3b8', borderLeft: '4px solid #475569' }}>
             <div>
               <div className="overview-card-header">
-                <div className="overview-card-icon" style={{ background: '#e0e7ff', color: '#4338ca' }}>
+                <div className="overview-card-icon" style={{ background: '#cbd5e1', color: '#1e293b' }}>
                   💳
                 </div>
-                <h2 className="overview-card-title">Carte fisiche</h2>
+                <h2 className="overview-card-title" style={{ color: '#0f172a' }}>Carte fisiche</h2>
               </div>
-              <p className="overview-card-desc">
+              <p className="overview-card-desc" style={{ color: '#475569' }}>
                 Collega le tessere NFC/RFID preprogrammate ai clienti e gestisci lo stock del punto vendita.
               </p>
             </div>
@@ -162,7 +162,7 @@ export const OverviewPage: React.FC = () => {
               <Link
                 to="/dashboard/cards"
                 className="btn btn-outline"
-                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, borderColor: '#4f46e5', color: '#4338ca' }}
+                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, borderColor: '#475569', color: '#1e293b' }}
               >
                 Gestisci Carte →
               </Link>
@@ -221,33 +221,8 @@ export const OverviewPage: React.FC = () => {
             </div>
           </div>
         )}
-
-        {/* 7. Impostazioni */}
-        {hasPermission('business.view') && (
-          <div className="overview-card">
-            <div>
-              <div className="overview-card-header">
-                <div className="overview-card-icon" style={{ background: '#f1f5f9', color: '#334155' }}>
-                  ⚙️
-                </div>
-                <h2 className="overview-card-title">Impostazioni</h2>
-              </div>
-              <p className="overview-card-desc">
-                Configura i parametri di accumulo punti, le aliquote e i dati anagrafici del negozio.
-              </p>
-            </div>
-            <div className="overview-card-action">
-              <Link
-                to="/dashboard/settings"
-                className="btn btn-outline"
-                style={{ width: '100%', justifyContent: 'center', fontWeight: 700, borderColor: '#64748b', color: '#334155' }}
-              >
-                Impostazioni →
-              </Link>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
 };
+

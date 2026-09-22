@@ -12,10 +12,11 @@ import { generateOperationId } from '../../api/client';
 import { formatOfferBenefit } from '../../utils/formatters';
 
 export const VipPage: React.FC = () => {
-  const { activeBusiness, hasPermission } = useAuth();
+  const { activeBusiness, hasPermission, hasModule } = useAuth();
 
   const [exclusiveOffers, setExclusiveOffers] = useState<Offer[]>([]);
   const [sharedOffers, setSharedOffers] = useState<Offer[]>([]);
+  const [vipStats, setVipStats] = useState<{ active_vip_customers: number; can_create_vip_offers: boolean } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -56,14 +57,19 @@ export const VipPage: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      const list = await offersApi.list(activeBusiness.id, true);
-      const exclusive = list.filter((o) => o.target_audience === 'vip' || o.is_vip);
-      const shared = list.filter((o) => o.target_audience === 'vantaggi_vip');
+      const [list, stats] = await Promise.all([
+        offersApi.list(activeBusiness.id, true).catch(() => []),
+        loyaltyApi.getVipStats(activeBusiness.id).catch(() => ({ active_vip_customers: 0, can_create_vip_offers: false })),
+      ]);
+      const exclusive = (list || []).filter((o) => o.target_audience === 'vip' || o.is_vip);
+      const shared = (list || []).filter((o) => o.target_audience === 'vantaggi_vip');
       setExclusiveOffers(exclusive);
       setSharedOffers(shared);
+      setVipStats(stats ?? { active_vip_customers: 0, can_create_vip_offers: false });
     } catch {
       setExclusiveOffers([]);
       setSharedOffers([]);
+      setVipStats({ active_vip_customers: 0, can_create_vip_offers: false });
     } finally {
       setIsLoading(false);
     }
@@ -281,19 +287,51 @@ export const VipPage: React.FC = () => {
 
   if (isLoading) return <Spinner size="lg" text="Caricamento benefici esclusivi VIP..." />;
 
+  const isVipEnabled = hasModule('vip') || hasModule('vip_offers') || Boolean(vipStats?.can_create_vip_offers);
+
   return (
-    <div>
+    <div style={{ opacity: isVipEnabled ? 1 : 0.85 }}>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Benefici esclusivi VIP</h1>
+          <h1 className="page-title" style={{ color: isVipEnabled ? undefined : 'var(--color-text-muted)' }}>
+            Benefici esclusivi VIP
+          </h1>
           <p className="page-subtitle">Crea offerte, premi e vantaggi riservati esclusivamente ai clienti VIP.</p>
         </div>
         {canManage && (
-          <Button variant="primary" onClick={handleOpenCreate} style={{ background: 'var(--color-vip, #d97706)', borderColor: 'var(--color-vip, #d97706)' }}>
+          <Button
+            variant="primary"
+            onClick={handleOpenCreate}
+            disabled={!isVipEnabled}
+            title={!isVipEnabled ? 'Per utilizzare il profilo VIP, aggiorna il tuo piano.' : 'Crea nuova offerta VIP'}
+            style={{
+              background: isVipEnabled ? '#0f172a' : undefined,
+              borderColor: isVipEnabled ? '#334155' : undefined,
+              color: isVipEnabled ? '#f8fafc' : undefined,
+            }}
+          >
             👑 + Nuovo beneficio VIP
           </Button>
         )}
       </div>
+
+      {!isVipEnabled && (
+        <div
+          style={{
+            background: '#f1f5f9',
+            border: '1.5px solid #cbd5e1',
+            borderLeft: '4px solid #64748b',
+            borderRadius: 'var(--radius-md)',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.25rem',
+            color: '#334155',
+            fontSize: '0.95rem',
+            lineHeight: 1.5,
+          }}
+        >
+          🔒 <strong>Modulo VIP non attivo:</strong> Per utilizzare il profilo VIP, aggiorna il tuo piano.
+        </div>
+      )}
 
       {feedback && (
         <div style={{ marginBottom: '1.25rem' }}>

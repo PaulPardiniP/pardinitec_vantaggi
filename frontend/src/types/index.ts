@@ -88,6 +88,7 @@ export interface Customer {
   email: string | null;
   created_at: string;
   updated_at: string;
+  profiles?: string[];
   consents?: CustomerConsents;
   loyalty_accounts?: LoyaltyAccount[];
 }
@@ -139,7 +140,8 @@ export interface Credential {
 
 export interface LoyaltyProgram {
   business_id: number;
-  mode: 'fixed_per_purchase' | 'points_per_amount' | 'manual';
+  mode?: 'fixed_per_purchase' | 'points_per_amount' | 'manual';
+  program_type?: 'fixed_per_purchase' | 'points_per_amount' | 'manual';
   points_ratio: number;
   fixed_points: number;
   description: string | null;
@@ -229,9 +231,10 @@ export interface PublicCardView {
     status: string;
   };
   customer?: {
-    id: number;
+    id?: number;
     first_name: string;
     last_name: string;
+    display_name?: string;
     phone?: string;
     email?: string;
   };

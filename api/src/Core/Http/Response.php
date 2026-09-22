@@ -18,6 +18,8 @@ final class Response
         header('X-Frame-Options: DENY');
         header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'");
         header("Referrer-Policy: strict-origin-when-cross-origin");
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
         
         if (($_ENV['APP_ENV'] ?? '') === 'production') {
             header('Strict-Transport-Security: max-age=31536000; includeSubDomains');

@@ -49,6 +49,7 @@ interface AuthContextType {
   switchBusiness: (businessId: number) => void;
   selectBusiness: (business: Business) => void;
   clearActiveBusiness: () => void;
+  exitMerchantMode: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   /** Returns true if a given module code is enabled for activeBusiness. */
   hasModule: (code: string) => boolean;
@@ -230,6 +231,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem(ACTIVE_BIZ_STORAGE_KEY);
   };
 
+  const exitMerchantMode = async () => {
+    const bizId = activeBusinessId;
+    clearActiveBusiness();
+    if (bizId) {
+      try {
+        await businessApi.logImpersonateExit(bizId);
+      } catch {
+        // Ignora errori di rete nel log di uscita
+      }
+    }
+  };
+
+  // Timer di inattività 25 minuti per Super Admin in Vista Commerciante
+  useEffect(() => {
+    if (!isSuperAdmin || !activeBusinessId) return;
+
+    const INACTIVITY_LIMIT_MS = 25 * 60 * 1000; // 25 minuti
+    let timer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        exitMerchantMode().then(() => {
+          alert('Sessione commerciante scaduta per inattività (25 minuti). Sei tornato al pannello Super Admin.');
+          window.location.href = '/admin/businesses';
+        });
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    resetTimer();
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((ev) => window.addEventListener(ev, resetTimer));
+
+    return () => {
+      clearTimeout(timer);
+      activityEvents.forEach((ev) => window.removeEventListener(ev, resetTimer));
+    };
+  }, [isSuperAdmin, activeBusinessId]);
+
   const sessionState = user?.session_state || (user ? 'active' : null);
   const isAuthenticated = Boolean(user && sessionState === 'active');
 
@@ -250,6 +291,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switchBusiness,
         selectBusiness,
         clearActiveBusiness,
+        exitMerchantMode,
         hasPermission,
         hasModule,
         refreshSession,

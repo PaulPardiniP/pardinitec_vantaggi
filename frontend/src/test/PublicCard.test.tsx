@@ -53,12 +53,12 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
       expect(screen.getByText('140')).toBeInTheDocument();
       expect(screen.getByText('Punti Accumulati')).toBeInTheDocument();
       expect(screen.getByText('Prossimo premio: Vassoio Paste')).toBeInTheDocument();
-      expect(screen.getByText(/Vedi premi \(2\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Premi con punti \(2\)/i)).toBeInTheDocument();
       expect(screen.getByText('🔒 Accesso Commerciante')).toBeInTheDocument();
     });
 
     // Cliccando sul pulsante tattile verticale si apre il catalogo premi
-    fireEvent.click(screen.getByText(/Vedi premi \(2\)/i));
+    fireEvent.click(screen.getByText(/Premi con punti \(2\)/i));
     expect(screen.getByRole('heading', { name: 'Premi riscattabili con punti' })).toBeInTheDocument();
     expect(screen.getByText('Caffè Omaggio')).toBeInTheDocument();
     expect(screen.getByText('Vassoio Paste')).toBeInTheDocument();
@@ -447,35 +447,8 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
       // Mostra messaggio di successo e saldo aggiornato a 10
       expect(screen.getByText(/Punti aggiornati con successo! Nuovo saldo: 10 punti\./i)).toBeInTheDocument();
       expect(screen.getByText('10')).toBeInTheDocument();
-    });
-
-    // 2. Correzione -5
-    fireEvent.click(screen.getByText('➕ Gestisci Punti'));
-    expect(screen.getByRole('heading', { name: 'Gestione Punti' })).toBeInTheDocument();
-
-    const deltaInput = screen.getByLabelText(/Delta Punti/i);
-    fireEvent.change(deltaInput, { target: { value: '-5' } });
-
-    const reasonInput = screen.getByLabelText(/Causale Operazione/i);
-    fireEvent.change(reasonInput, { target: { value: 'Rettifica errore scontrino' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Conferma Operazione' }));
-
-    await waitFor(() => {
-      expect(adjustSpy).toHaveBeenLastCalledWith(
-        1,
-        101,
-        expect.objectContaining({
-          points: -5,
-          reason: 'Rettifica errore scontrino',
-          operation_id: expect.any(String),
-        })
-      );
-      // Il modale deve chiudersi
-      expect(screen.queryByRole('heading', { name: 'Gestione Punti' })).not.toBeInTheDocument();
-      // Mostra messaggio di successo e saldo finale a 5
-      expect(screen.getByText(/Punti aggiornati con successo! Nuovo saldo: 5 punti\./i)).toBeInTheDocument();
-      expect(screen.getByText('5')).toBeInTheDocument();
+      // Verifica blocco scansione per apertura
+      expect(screen.getByTestId('scan-session-locked')).toBeInTheDocument();
     });
   });
 
@@ -570,10 +543,10 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Storico punti/i)).toBeInTheDocument();
+      expect(screen.getByText(/Movimenti punti/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/Storico punti/i));
+    fireEvent.click(screen.getByText(/Movimenti punti/i));
 
     expect(screen.getByRole('heading', { name: 'Storico Movimenti Punti' })).toBeInTheDocument();
     expect(screen.getByText('Acquisto paste della domenica')).toBeInTheDocument();
@@ -635,11 +608,73 @@ describe('Vista Pubblica ed Operativa Adattativa /c/{token}', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Offerte Vantaggi \(1\)/i)).toBeInTheDocument();
-      expect(screen.getByText(/Vedi premi \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Premi con punti \(1\)/i)).toBeInTheDocument();
     });
 
     // Test formattazione automatica beneficio percentuale decimale
     fireEvent.click(screen.getByText(/Offerte Vantaggi \(1\)/i));
     expect(screen.getByText('Sconto 15,5%')).toBeInTheDocument();
   });
+
+  it('13. Vista Tarjeta Física VIP: cuenta VIP con credencial física muestra exactamente los mismos beneficios VIP y botón "Offerte Esclusive VIP" que la digital', async () => {
+    const mockVipOffers = [
+      {
+        id: 77,
+        business_id: 1,
+        title: 'Calice di Benvenuto Riservato VIP',
+        description: 'Offerta esclusiva per soci VIP',
+        discount_type: 'fixed' as const,
+        discount_value: 20,
+        is_vip: true,
+        card_profile_id: 3,
+        is_single_use: false,
+        status: 'active' as const,
+      },
+    ];
+
+    const mockVipPhysicalView: PublicCardView = {
+      state: 'active',
+      mode: 'public',
+      credential_id: 201,
+      credential_type: 'physical',
+      business: { id: 1, name: 'Ristorante Belvedere', slug: 'ristorante-belvedere' },
+      loyalty_account: {
+        id: 102,
+        profile_code: 'vip',
+        profile_name: 'VIP Club',
+        status: 'active',
+      },
+      offers: mockVipOffers,
+    };
+
+    vi.spyOn(publicCardApi, 'resolve').mockResolvedValue(mockVipPhysicalView);
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/c/token_vip_physical_888']}>
+          <Routes>
+            <Route path="/c/:token" element={<PublicCardPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Ristorante Belvedere')).toBeInTheDocument();
+      expect(screen.getByText(/PROFILO VIP CLUB/i)).toBeInTheDocument();
+      expect(screen.getByText(/Offerte Esclusive VIP \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Mostra questo codice per accedere ai tuoi benefici esclusivi VIP/i)).toBeInTheDocument();
+    });
+
+    // Cliccando sul pulsante VIP si apre la modale con le offerte VIP
+    fireEvent.click(screen.getByText(/Offerte Esclusive VIP \(1\)/i));
+    expect(screen.getByRole('heading', { name: 'Offerte Esclusive VIP' })).toBeInTheDocument();
+    expect(screen.getByText('Calice di Benvenuto Riservato VIP')).toBeInTheDocument();
+    expect(screen.getByText('Sconto €20,00')).toBeInTheDocument();
+
+    // Nessuna interferenza da Punti o Vantaggi
+    expect(screen.queryByText('Punti Accumulati')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Premi con punti/i)).not.toBeInTheDocument();
+  });
 });
+

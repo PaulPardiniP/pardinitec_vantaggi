@@ -67,6 +67,26 @@ final class CapabilityService
      */
     public function isCapabilityAllowedForProfile(int $cardProfileId, string $capabilityCode): bool
     {
+        // Reglas canónicas:
+        // - 'points' y 'rewards' permitidos para perfiles 'punti' y 'vantaggi'
+        // - 'offers', 'benefits', 'discounts' permitidos para perfil 'vantaggi'
+        // - 'vip_offers' permitido exclusivamente para perfil 'vip'
+        $pStmt = $this->pdo->prepare("SELECT `code` FROM `card_profiles` WHERE `id` = :id LIMIT 1");
+        $pStmt->execute(['id' => $cardProfileId]);
+        $pCode = $pStmt->fetchColumn();
+
+        if ($pCode !== false) {
+            if ($capabilityCode === 'points' || $capabilityCode === 'rewards') {
+                return in_array($pCode, ['punti', 'vantaggi'], true);
+            }
+            if (in_array($capabilityCode, ['offers', 'benefits', 'discounts'], true)) {
+                return $pCode === 'vantaggi';
+            }
+            if ($capabilityCode === 'vip_offers') {
+                return $pCode === 'vip';
+            }
+        }
+
         $stmt = $this->pdo->prepare("
             SELECT COUNT(*)
             FROM `card_profile_modules` cpm

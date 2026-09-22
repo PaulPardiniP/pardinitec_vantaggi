@@ -201,11 +201,11 @@ describe('Verifica UX: Ricerca Clienti, Contrasto NFC, Panoramica e Mobile Respo
         'Carte fisiche',
         'Clienti',
         'Membri',
-        'Impostazioni',
       ]);
 
-      // Verifica che "Accredito punti" NON sia presente tra le schede h2
+      // Verifica che "Accredito punti" e "Impostazioni" NON siano presenti tra le schede h2 di Panoramica
       expect(cardHeadings).not.toContain('Accredito punti');
+      expect(cardHeadings).not.toContain('Impostazioni');
     });
   });
 

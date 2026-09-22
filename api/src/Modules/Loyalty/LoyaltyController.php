@@ -19,15 +19,18 @@ final class LoyaltyController
     private LoyaltyService $loyaltyService;
     private AuthService $authService;
     private AuthorizationService $authzService;
+    private CapabilityService $capabilityService;
 
     public function __construct(
         ?LoyaltyService $loyaltyService = null,
         ?AuthService $authService = null,
-        ?AuthorizationService $authzService = null
+        ?AuthorizationService $authzService = null,
+        ?CapabilityService $capabilityService = null
     ) {
         $this->loyaltyService = $loyaltyService ?? new LoyaltyService();
         $this->authService = $authService ?? new AuthService();
         $this->authzService = $authzService ?? new AuthorizationService();
+        $this->capabilityService = $capabilityService ?? new CapabilityService();
     }
 
     private function authenticate(Request $request): array
@@ -141,6 +144,73 @@ final class LoyaltyController
             Response::error($e->getMessage(), 404);
         } catch (Throwable $e) {
             Response::error('Error al obtener la anteprima de la carta.', 500);
+        }
+    }
+
+    public function changeProfile(Request $request, int $businessId, int $accountId): void
+    {
+        $session = $this->authenticate($request);
+        $this->verifyCsrf($request, $session);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_EDIT);
+
+            $body = $request->getJsonBody();
+            $profileCode = $body['profile_code'] ?? ($body['card_profile_id'] ?? 'punti');
+
+            $updated = $this->loyaltyService->changeAccountProfile($businessId, $accountId, $profileCode);
+
+            $msg = ($updated['profile_code'] === 'vantaggi')
+                ? 'Profilo conto aggiornato a Vantaggi con successo. Saldo e credenziali rimangono invariati.'
+                : 'Profilo conto aggiornato a Punti con successo. Saldo e credenziali rimangono invariati.';
+
+            Response::success($msg, [
+                'data' => $updated,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 400);
+        } catch (Throwable $e) {
+            Response::error('Errore durante la modifica del profilo del conto.', 500);
+        }
+    }
+
+    public function getVipStats(Request $request, int $businessId): void
+    {
+        $session = $this->authenticate($request);
+
+        try {
+            $this->authzService->requirePermission($session['user_id'], $businessId, Permission::CUSTOMER_VIEW);
+
+            $hasVipModule = $this->capabilityService->isCapabilityEnabledForBusiness($businessId, 'vip_offers');
+
+            $stmt = Connection::get()->prepare("
+                SELECT COUNT(DISTINCT la.`customer_id`) 
+                FROM `loyalty_accounts` la
+                INNER JOIN `card_profiles` cp ON la.`card_profile_id` = cp.`id`
+                WHERE la.`business_id` = :business_id 
+                  AND cp.`code` = 'vip' 
+                  AND la.`status` = 'active'
+            ");
+            $stmt->execute(['business_id' => $businessId]);
+            $vipCount = (int) $stmt->fetchColumn();
+
+            Response::success('Statistiche VIP recuperate con successo.', [
+                'data' => [
+                    'business_id' => $businessId,
+                    'active_vip_customers' => $vipCount,
+                    'vip_module_enabled' => $hasVipModule,
+                    'can_create_vip_offers' => $hasVipModule,
+                ],
+                'active_vip_customers' => $vipCount,
+                'vip_module_enabled' => $hasVipModule,
+                'can_create_vip_offers' => $hasVipModule,
+            ], 200);
+        } catch (ForbiddenException $e) {
+            Response::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            Response::error('Errore durante il recupero delle statistiche VIP.', 500);
         }
     }
 }

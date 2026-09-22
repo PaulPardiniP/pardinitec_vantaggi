@@ -62,23 +62,6 @@ export const AdminOverviewPage: React.FC = () => {
             Gestisci commerci, moduli attivi, inventario carte NFC/RFID e accessi alla piattaforma.
           </p>
         </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', width: '100%', maxWidth: '320px' }}>
-          <Link
-            to="/admin/businesses"
-            className="btn btn-sm banner-action-btn"
-            style={{ background: '#7c3aed', color: '#ffffff', border: '1px solid #6d28d9', fontWeight: 700, flex: 1 }}
-          >
-            🏢 Commerci
-          </Link>
-          <Link
-            to="/admin/cards"
-            className="btn btn-sm banner-action-btn"
-            style={{ background: 'rgba(255,255,255,0.1)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', fontWeight: 700, flex: 1 }}
-          >
-            💳 Carte NFC
-          </Link>
-        </div>
       </div>
 
       {/* Statistiche */}

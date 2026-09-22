@@ -625,6 +625,7 @@ final class CredentialService
                         'id' => (int) $row['customer_id'],
                         'first_name' => (string) $row['customer_first_name'],
                         'last_name' => (string) $row['customer_last_name'],
+                        'display_name' => trim((string) $row['customer_first_name'] . ' ' . (string) $row['customer_last_name']),
                     ];
 
                     // Solo incluir canales de contacto si el usuario tiene permiso explícito de edición de clientes
@@ -700,6 +701,17 @@ final class CredentialService
             ],
             'loyalty_account' => $loyaltyAccountData,
         ];
+
+        if (!empty($row['customer_first_name'])) {
+            $firstName = trim((string) $row['customer_first_name']);
+            $lastName = trim((string) ($row['customer_last_name'] ?? ''));
+            $initial = !empty($lastName) ? mb_substr($lastName, 0, 1) . '.' : '';
+            $publicView['customer'] = [
+                'first_name' => $firstName,
+                'last_name' => $initial,
+                'display_name' => trim($firstName . ' ' . $initial),
+            ];
+        }
 
         if ($hasPoints) {
             $publicView['program'] = $programService->getProgram($bizId);

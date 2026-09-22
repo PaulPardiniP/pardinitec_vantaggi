@@ -223,7 +223,7 @@ export const MembersPage: React.FC = () => {
                       <td>
                         <span className="badge badge-success">{m.status}</span>
                       </td>
-                      <td>{new Date(m.joined_at).toLocaleDateString('it-IT')}</td>
+                      <td>{m.joined_at && !isNaN(new Date(m.joined_at).getTime()) ? new Date(m.joined_at).toLocaleDateString('it-IT') : '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         {canManageMembers && !isSelf && (
                           <Button variant="danger" size="sm" onClick={() => setMemberToRemove(m)}>
@@ -291,9 +291,9 @@ export const MembersPage: React.FC = () => {
                                 size="sm"
                                 isLoading={actionInvitationId === inv.id}
                                 onClick={() => handleResendInvitation(inv)}
-                                title="Genera un nuovo token valido 7 giorni"
+                                title="Genera un nuovo token valido 7 giorni e invalida il precedente"
                               >
-                                🔄 Reinvia
+                                🔄 Reinvia invito / Riattiva accesso
                               </Button>
                             )}
                             {isPending && (
@@ -343,8 +343,8 @@ export const MembersPage: React.FC = () => {
                 value={createdInviteUrl}
                 style={{ fontSize: '0.85rem', marginBottom: '0.75rem', background: '#ffffff' }}
               />
-              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
-                Il link è monouso ed ha validità di 7 giorni. Il collaboratore potrà attivare il proprio profilo ed operare nel punto vendita.
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-main)', marginBottom: '0.75rem', fontWeight: 500 }}>
+                Invia questo link al collaboratore oppure completa tu la configurazione. Il link scade tra 7 giorni.
               </p>
               <Button
                 variant="primary"

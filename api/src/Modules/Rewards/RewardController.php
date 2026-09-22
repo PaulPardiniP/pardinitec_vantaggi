@@ -69,9 +69,10 @@ final class RewardController
                 Response::error('Il catalogo premi non è attivo per questo commercio.', 403);
             }
 
-            $onlyActive = $request->getQuery('all') !== '1';
-            $profile = $request->getQuery('profile');
             $status = $request->getQuery('status');
+            $all = $request->getQuery('all') === '1';
+            $onlyActive = !$all && empty($status);
+            $profile = $request->getQuery('profile');
             $rewards = $this->rewardService->listRewards(
                 $businessId,
                 $onlyActive,

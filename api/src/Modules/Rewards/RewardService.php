@@ -283,12 +283,14 @@ final class RewardService
         $where = ['r.`business_id` = :business_id'];
         $params = ['business_id' => $businessId];
 
-        if ($onlyActive) {
+        if ($statusFilter === 'archived') {
+            $where[] = "r.`status` = 'archived'";
+        } elseif ($statusFilter === 'inactive') {
+            $where[] = "r.`status` = 'inactive'";
+        } elseif ($statusFilter === 'active' || $onlyActive) {
             $where[] = "r.`status` = 'active'";
             $where[] = "(r.`valid_from` IS NULL OR r.`valid_from` <= UTC_TIMESTAMP())";
             $where[] = "(r.`valid_until` IS NULL OR r.`valid_until` >= UTC_TIMESTAMP())";
-        } elseif ($statusFilter === 'archived') {
-            $where[] = "r.`status` = 'archived'";
         } else {
             $where[] = "r.`status` != 'archived'";
         }

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { businessApi } from '../../api/services';
+import { businessApi, adminApi } from '../../api/services';
 import type { Business, BusinessModule, BusinessPackages, BusinessInvitation } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
@@ -39,6 +39,13 @@ export const AdminBusinessesPage: React.FC = () => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdInviteUrl, setCreatedInviteUrl] = useState<string | null>(null);
+  const [createdOwnerEmail, setCreatedOwnerEmail] = useState<string>('');
+
+  // Modale Password per Vista Commerciante
+  const [impersonateTarget, setImpersonateTarget] = useState<Business | null>(null);
+  const [impersonatePassword, setImpersonatePassword] = useState('');
+  const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   // Modale Modifica Commercio
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(null);
@@ -123,8 +130,32 @@ export const AdminBusinessesPage: React.FC = () => {
   };
 
   const handleOpenAsMerchant = (b: Business) => {
-    selectBusiness(b);
-    navigate('/dashboard');
+    setImpersonateTarget(b);
+    setImpersonatePassword('');
+    setPasswordError(null);
+  };
+
+  const handleConfirmImpersonate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!impersonateTarget) return;
+    if (!impersonatePassword.trim()) {
+      setPasswordError('Inserisci la password di Super Admin.');
+      return;
+    }
+
+    setIsVerifyingPassword(true);
+    setPasswordError(null);
+    try {
+      await adminApi.verifyPassword(impersonatePassword, impersonateTarget.id);
+      selectBusiness(impersonateTarget);
+      setImpersonateTarget(null);
+      setImpersonatePassword('');
+      navigate('/dashboard');
+    } catch (err: any) {
+      setPasswordError(err.message || 'Password non corretta.');
+    } finally {
+      setIsVerifyingPassword(false);
+    }
   };
 
   const handleCreateBusiness = async (e: React.FormEvent) => {
@@ -143,31 +174,34 @@ export const AdminBusinessesPage: React.FC = () => {
       });
       return;
     }
+
     setIsSubmitting(true);
     setFeedback(null);
     setCreatedInviteUrl(null);
     try {
+      const emailUsed = ownerEmail.trim().toLowerCase();
       const res = await businessApi.create({
         name,
         slug: slug.trim().toLowerCase() || undefined,
         tax_id: taxId.trim() || undefined,
         self_registration_enabled: false,
-        owner_email: ownerEmail.trim() || undefined,
+        owner_email: emailUsed || undefined,
         owner_first_name: ownerFirstName.trim() || undefined,
         owner_last_name: ownerLastName.trim() || undefined,
         packages: createPackages,
       });
 
-      let msg = `Commercio "${res.name}" creato con successo!`;
-      if (res.invitation?.invitation_url) {
-        const absoluteUrl = new URL(res.invitation.invitation_url, window.location.origin).toString();
+      const invUrl = res.invitation?.invitation_url || (res as any).invitation_url;
+      if (invUrl) {
+        const absoluteUrl = new URL(invUrl, window.location.origin).toString();
         setCreatedInviteUrl(absoluteUrl);
-        msg += ' È stato generato il link di invito per il titolare.';
-      } else if (ownerEmail.trim()) {
-        msg += ` Il titolare "${ownerEmail.trim()}" è stato associato.`;
+        setCreatedOwnerEmail(emailUsed);
       }
 
-      setFeedback({ type: 'success', message: msg });
+      setFeedback({
+        type: 'success',
+        message: `Commercio "${res.name}" creato con successo! È stato generato il link di attivazione.`,
+      });
       setName('');
       setSlug('');
       setIsSlugManuallyEdited(false);
@@ -181,9 +215,6 @@ export const AdminBusinessesPage: React.FC = () => {
         vip: false,
         campaigns: false,
       });
-      if (!res.invitation?.invitation_url) {
-        setIsCreateOpen(false);
-      }
       await loadBusinesses();
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Errore durante la creazione del commercio.' });
@@ -679,31 +710,52 @@ export const AdminBusinessesPage: React.FC = () => {
               type="success"
               message="Commercio creato con successo ed è stato generato l'invito per il titolare!"
             />
-            <div style={{ marginTop: '1rem', padding: '1rem', background: '#f8fafc', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Link di attivazione per il Titolare:</div>
+            <div style={{ marginTop: '1rem', padding: '1rem', background: '#f8fafc', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+              {createdOwnerEmail && (
+                <div style={{ marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+                  <strong>Email Titolare:</strong> <span style={{ color: 'var(--color-primary)' }}>{createdOwnerEmail}</span>
+                </div>
+              )}
+              <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.85rem' }}>Link di attivazione per il Titolare:</div>
               <input
                 type="text"
                 readOnly
                 className="form-control"
-                value={createdInviteUrl ? new URL(createdInviteUrl, window.location.origin).toString() : ''}
+                value={createdInviteUrl}
                 style={{ fontSize: '0.85rem', marginBottom: '0.75rem', background: '#ffffff' }}
               />
-              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
-                Il link è monouso ed ha validità di 7 giorni. Il titolare potrà impostare la propria password e accedere.
-              </p>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => {
-                  if (createdInviteUrl) {
-                    const fullUrl = new URL(createdInviteUrl, window.location.origin).toString();
-                    navigator.clipboard.writeText(fullUrl);
-                    alert('Link copiato negli appunti!');
-                  }
-                }}
-              >
-                📋 Copia Link Invito
-              </Button>
+              <div style={{ padding: '0.5rem 0.75rem', background: '#fffbeb', borderRadius: 'var(--radius-sm)', border: '1px solid #fde68a', marginBottom: '1rem' }}>
+                <p style={{ fontSize: '0.8rem', color: '#92400e', margin: 0, fontWeight: 500 }}>
+                  ⚠️ <strong>Validità:</strong> Questo link è monouso e scade tra <strong>7 giorni</strong>. Il titolare potrà impostare la propria password e completare l'attivazione del commercio.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    if (createdInviteUrl) {
+                      navigator.clipboard.writeText(createdInviteUrl);
+                      alert('Link copiato negli appunti!');
+                    }
+                  }}
+                >
+                  📋 Copia Link Invito
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (createdInviteUrl) {
+                      const msg = `Ciao, ecco il link per attivare il tuo account su Pardinitec Vantaggi e configurare la tua password: ${createdInviteUrl}\n\nNota: Il link è monouso e scade tra 7 giorni.`;
+                      navigator.clipboard.writeText(msg);
+                      alert('Messaggio per il titolare copiato negli appunti!');
+                    }
+                  }}
+                >
+                  💬 Copia Messaggio (WhatsApp / Email)
+                </Button>
+              </div>
             </div>
             <div className="modal-actions" style={{ marginTop: '1.25rem' }}>
               <Button
@@ -711,6 +763,7 @@ export const AdminBusinessesPage: React.FC = () => {
                 onClick={() => {
                   setIsCreateOpen(false);
                   setCreatedInviteUrl(null);
+                  setCreatedOwnerEmail('');
                 }}
               >
                 Chiudi
@@ -756,18 +809,19 @@ export const AdminBusinessesPage: React.FC = () => {
             />
 
             <div style={{ fontWeight: 600, fontSize: '0.95rem', marginTop: '1.25rem', marginBottom: '0.5rem', color: 'var(--color-primary)' }}>
-              2. Onboarding Titolare (Opzionale)
+              2. Onboarding Titolare *
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
-              Inserendo l'email verrà creato un invito con token sicuro valido 7 giorni per consentire al titolare di attivare il proprio account.
+              Il Super Admin non imposta né conosce la password del titolare. Verrà generato un link di invito sicuro di un solo uso valido 7 giorni.
             </p>
 
             <Input
-              label="Email Titolare"
+              label="Email Titolare *"
               type="email"
               placeholder="titolare@azienda.it"
               value={ownerEmail}
               onChange={(e) => setOwnerEmail(e.target.value)}
+              helper="Obbligatoria per generare il link di attivazione account."
             />
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -1356,6 +1410,65 @@ export const AdminBusinessesPage: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Modale Conferma Password Super Admin per Vista Commerciante */}
+      <Modal
+        isOpen={Boolean(impersonateTarget)}
+        title="Accesso Vista Commerciante"
+        onClose={() => {
+          setImpersonateTarget(null);
+          setImpersonatePassword('');
+          setPasswordError(null);
+        }}
+      >
+        <form onSubmit={handleConfirmImpersonate}>
+          <div style={{ marginBottom: '1rem', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            Stai per accedere al pannello operativo di:{' '}
+            <strong style={{ color: 'var(--color-primary)' }}>{impersonateTarget?.name}</strong>.
+            <p style={{ marginTop: '0.5rem', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+              Per motivi di sicurezza, conferma la tua identità inserendo la tua password attuale di Super Admin.
+            </p>
+          </div>
+
+          {passwordError && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Alert type="error" message={passwordError} />
+            </div>
+          )}
+
+          <Input
+            label="Password Super Admin *"
+            type="password"
+            required
+            placeholder="••••••••"
+            value={impersonatePassword}
+            onChange={(e) => setImpersonatePassword(e.target.value)}
+            autoFocus
+          />
+
+          <div className="modal-actions" style={{ marginTop: '1.25rem' }}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setImpersonateTarget(null);
+                setImpersonatePassword('');
+                setPasswordError(null);
+              }}
+              disabled={isVerifyingPassword}
+            >
+              Annulla
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={isVerifyingPassword}
+            >
+              Conferma e Accedi
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

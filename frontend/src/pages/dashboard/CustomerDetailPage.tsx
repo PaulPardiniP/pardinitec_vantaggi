@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { customerApi, loyaltyApi } from '../../api/services';
-import type { Customer, Credential, CustomerConsents } from '../../types';
+import { customerApi, loyaltyApi, businessApi, cardsApi } from '../../api/services';
+import type { Customer, Credential, CustomerConsents, BusinessPackages } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Select } from '../../components/common/Select';
@@ -18,6 +18,7 @@ export const CustomerDetailPage: React.FC = () => {
   const { activeBusiness, hasPermission } = useAuth();
 
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [businessPackages, setBusinessPackages] = useState<BusinessPackages | null>(null);
   const [accountCredentials, setAccountCredentials] = useState<Record<number, Credential[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +44,11 @@ export const CustomerDetailPage: React.FC = () => {
   const [rotateModalError, setRotateModalError] = useState<string | null>(null);
   const [isRotating, setIsRotating] = useState(false);
 
+  // Revoca credenziale digitale
+  const [credToRevoke, setCredToRevoke] = useState<{ credentialId: number; accountName: string } | null>(null);
+  const [revokeModalError, setRevokeModalError] = useState<string | null>(null);
+  const [isRevoking, setIsRevoking] = useState(false);
+
   // Visualizzazione QR Credenziale
   const [qrDisplay, setQrDisplay] = useState<{ token: string; profileName: string } | null>(null);
 
@@ -53,6 +59,12 @@ export const CustomerDetailPage: React.FC = () => {
   const [revealError, setRevealError] = useState<string | null>(null);
   const [copiedReveal, setCopiedReveal] = useState(false);
 
+  // Modifica Profilo (Punti ↔ Vantaggi, senza rigenerare credenziali)
+  const [changeProfileAccount, setChangeProfileAccount] = useState<{ accountId: number; currentCode: 'punti' | 'vantaggi' } | null>(null);
+  const [changeProfileTarget, setChangeProfileTarget] = useState<'punti' | 'vantaggi'>('vantaggi');
+  const [changeProfileError, setChangeProfileError] = useState<string | null>(null);
+  const [isChangingProfile, setIsChangingProfile] = useState(false);
+
   // Nuovo consenso marketing
   const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
   const [consentCheckbox, setConsentCheckbox] = useState(false);
@@ -61,13 +73,20 @@ export const CustomerDetailPage: React.FC = () => {
 
   const canEdit = hasPermission('customer.edit');
 
+
   const fetchCustomerData = async () => {
     if (!activeBusiness || !customerId) return;
     setIsLoading(true);
     setError(null);
     try {
-      const custData = await customerApi.get(activeBusiness.id, customerId);
+      const [custData, pkgRes] = await Promise.all([
+        customerApi.get(activeBusiness.id, customerId),
+        businessApi?.getPackages
+          ? businessApi.getPackages(activeBusiness.id).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       setCustomer(custData);
+      setBusinessPackages(pkgRes?.packages ?? null);
       setEditFirstName(custData.first_name);
       setEditLastName(custData.last_name);
       setEditPhone(custData.phone || '');
@@ -240,6 +259,41 @@ export const CustomerDetailPage: React.FC = () => {
     }
   };
 
+  // Revoca Credenziale Digitale
+  const handleConfirmRevoke = async () => {
+    if (!activeBusiness || !credToRevoke) return;
+    setIsRevoking(true);
+    setRevokeModalError(null);
+    setFeedback(null);
+    try {
+      await loyaltyApi.revokeCredential(activeBusiness.id, credToRevoke.credentialId);
+      setFeedback({ type: 'success', message: `Credenziale digitale per ${credToRevoke.accountName} revocata con successo.` });
+      setCredToRevoke(null);
+      setRevokeModalError(null);
+      await fetchCustomerData();
+    } catch (err: any) {
+      setRevokeModalError(err.message || 'Errore durante la revoca della credenziale.');
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
+  // Disassociazione Carta Fisica
+  const handleUnassignPhysicalCard = async (cardId: number) => {
+    if (!activeBusiness) return;
+    if (!window.confirm(`Sei sicuro di voler disassociare la carta fisica #${cardId} da questo conto? La carta tornerà disponibile per una nuova attivazione mantenendo inalterati il conto, saldo, storico e token permanente.`)) {
+      return;
+    }
+    setFeedback(null);
+    try {
+      await cardsApi.unassign(activeBusiness.id, cardId);
+      setFeedback({ type: 'success', message: `Carta #${cardId} disassociata con successo dal conto.` });
+      await fetchCustomerData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante la disassociazione della carta fisica.' });
+    }
+  };
+
   // Rivelazione Sicura Link Credenziale (AES-256-GCM)
   const handleRevealLink = async () => {
     if (!activeBusiness || !revealModalCred) return;
@@ -274,6 +328,28 @@ export const CustomerDetailPage: React.FC = () => {
     setCopiedReveal(false);
   };
 
+  const handleChangeProfileSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness || !changeProfileAccount || isChangingProfile) return;
+    setIsChangingProfile(true);
+    setChangeProfileError(null);
+    setFeedback(null);
+    try {
+      await loyaltyApi.changeProfile(activeBusiness.id, changeProfileAccount.accountId, changeProfileTarget);
+      setChangeProfileAccount(null);
+      await fetchCustomerData();
+      const label = changeProfileTarget === 'vantaggi' ? 'Vantaggi' : 'Punti';
+      setFeedback({
+        type: 'success',
+        message: `Profilo conto aggiornato a ${label}. Saldo, movimenti, token e URL rimangono invariati.`,
+      });
+    } catch (err: any) {
+      setChangeProfileError(err.message || 'Errore durante la modifica del profilo.');
+    } finally {
+      setIsChangingProfile(false);
+    }
+  };
+
   if (isLoading) return <Spinner size="lg" text="Caricamento scheda cliente..." />;
   if (error || !customer) return <Alert type="error" message={error || 'Cliente non trovato.'} />;
 
@@ -283,17 +359,21 @@ export const CustomerDetailPage: React.FC = () => {
   const hasVantaggi = existingAccounts.some((a) => a.profile_code === 'vantaggi');
   const hasVip = existingAccounts.some((a) => a.profile_code === 'vip');
 
-  const canUpgradeToVantaggi = hasPunti && !hasVantaggi;
-  const canCreateVip = !hasVip;
-  const canCreateStandard = !hasPunti && !hasVantaggi;
+  const allowPunti = businessPackages ? (businessPackages.punti !== false || businessPackages.vantaggi === true) : true;
+  const allowVantaggi = businessPackages ? businessPackages.vantaggi === true : true;
+  const allowVip = businessPackages ? businessPackages.vip === true : true;
+
+  const canUpgradeToVantaggi = hasPunti && !hasVantaggi && allowVantaggi;
+  const canCreateVip = !hasVip && allowVip;
+  const canCreateStandard = !hasPunti && !hasVantaggi && (allowPunti || allowVantaggi);
 
   const availableOptions: { label: string; value: 'punti' | 'vantaggi' | 'vip' }[] = [];
   if (canUpgradeToVantaggi) {
     availableOptions.push({ label: '⭐ Attiva Vantaggi (ampliamento conto Punti esistente)', value: 'vantaggi' });
   }
   if (canCreateStandard) {
-    availableOptions.push({ label: 'Punti (modalità base)', value: 'punti' });
-    availableOptions.push({ label: 'Vantaggi (punti + offerte)', value: 'vantaggi' });
+    if (allowPunti) availableOptions.push({ label: 'Punti (modalità base)', value: 'punti' });
+    if (allowVantaggi) availableOptions.push({ label: 'Vantaggi (punti + offerte)', value: 'vantaggi' });
   }
   if (canCreateVip) {
     availableOptions.push({ label: '👑 Crea conto VIP separato (nuova credenziale e QR autonomi)', value: 'vip' });
@@ -325,7 +405,9 @@ export const CustomerDetailPage: React.FC = () => {
           <h1 className="page-title">
             {customer.first_name} {customer.last_name}
           </h1>
-          <p className="page-subtitle">Cliente #{customer.id} • Registrato il {new Date(customer.created_at).toLocaleDateString('it-IT')}</p>
+          <p className="page-subtitle">
+            Cliente #{customer.id} • Registrato il {customer.created_at && !isNaN(new Date(customer.created_at).getTime()) ? new Date(customer.created_at).toLocaleDateString('it-IT') : '—'}
+          </p>
         </div>
         {canEdit && (
           <Button variant="secondary" onClick={() => { setEditModalError(null); setIsEditOpen(true); }}>
@@ -364,7 +446,7 @@ export const CustomerDetailPage: React.FC = () => {
               <div>
                 <strong>Informativa Privacy</strong>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                  {latestPrivacyHistory
+                  {latestPrivacyHistory?.granted_at && !isNaN(new Date(latestPrivacyHistory.granted_at).getTime())
                     ? `Accettata il ${new Date(latestPrivacyHistory.granted_at).toLocaleDateString('it-IT')}`
                     : privacyGranted
                     ? 'Accettata'
@@ -383,9 +465,12 @@ export const CustomerDetailPage: React.FC = () => {
                 <strong>Comunicazioni Marketing</strong>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                   Stato: {marketingGranted ? 'Accettato' : 'Revocato / Non concesso'}
-                  {latestMarketingHistory && (
+                  {latestMarketingHistory?.granted_at && !isNaN(new Date(latestMarketingHistory.granted_at).getTime()) && (
                     <span> · {new Date(latestMarketingHistory.granted_at).toLocaleDateString('it-IT')}</span>
                   )}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
+                    (Invio comunicazioni automatiche non attivo)
+                  </div>
                 </div>
               </div>
               <div>
@@ -429,7 +514,7 @@ export const CustomerDetailPage: React.FC = () => {
             )}
             {canCreateVip && (
               <Button variant={canUpgradeToVantaggi ? 'secondary' : 'primary'} onClick={() => handleOpenAccountModal('vip')}>
-                👑 Crea Conto VIP Separato
+                👑 Crea profilo VIP
               </Button>
             )}
             {canCreateStandard && (
@@ -448,6 +533,8 @@ export const CustomerDetailPage: React.FC = () => {
           </div>
         ) : (
           customer.loyalty_accounts.map((acc) => {
+            const isStandard = acc.profile_code === 'punti' || acc.profile_code === 'vantaggi';
+            const isVip = acc.profile_code === 'vip';
             const badgeClass =
               acc.profile_code === 'vip'
                 ? 'badge-vip'
@@ -459,37 +546,63 @@ export const CustomerDetailPage: React.FC = () => {
             const activeDigitalCred = creds.find((c) => c.type === 'digital' && c.status === 'active');
             const activePhysicalCred = creds.find((c) => c.type === 'physical' && c.status === 'active');
 
+            const cardBgStyle =
+              acc.profile_code === 'vip'
+                ? { background: '#0f172a', border: '1.5px solid #334155', borderLeft: '4px solid #0f172a', color: '#f8fafc' }
+                : acc.profile_code === 'vantaggi'
+                ? { background: '#eff6ff', border: '1.5px solid #bfdbfe', borderLeft: '4px solid #2563eb' }
+                : { background: '#fff7ed', border: '1.5px solid #fed7aa', borderLeft: '4px solid #ea580c' };
+
+            const isConforming = acc.profile_code === 'punti'
+              ? allowPunti
+              : acc.profile_code === 'vantaggi'
+              ? allowVantaggi
+              : allowVip;
+
             return (
-              <div key={acc.id} className="card" style={{ borderLeft: '4px solid var(--color-primary)' }}>
+              <div key={acc.id} className="card" style={cardBgStyle}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
                       <span className={`badge ${badgeClass}`}>{acc.profile_name}</span>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Conto #{acc.id}</span>
+                      <span style={{ fontSize: '0.85rem', color: isVip ? '#94a3b8' : 'var(--color-text-muted)' }}>Conto #{acc.id}</span>
                       <span className="badge badge-success">{acc.status}</span>
+                      {!isConforming && (
+                        <span className="badge badge-warning" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 600 }}>
+                          ⚠️ Profilo non conforme al contratto
+                        </span>
+                      )}
                     </div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                      Attivato il {new Date(acc.created_at).toLocaleDateString('it-IT')}
+                    <div style={{ fontSize: '0.85rem', color: isVip ? '#94a3b8' : 'var(--color-text-muted)' }}>
+                      Attivato il {acc.created_at && !isNaN(new Date(acc.created_at).getTime()) ? new Date(acc.created_at).toLocaleDateString('it-IT') : '—'}
                     </div>
+                    {canEdit && isStandard && acc.status === 'active' && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        style={{ marginTop: '0.5rem' }}
+                        title="Cambia tra Punti e Vantaggi senza rigenerare credenziali"
+                        onClick={() => {
+                          const current = acc.profile_code as 'punti' | 'vantaggi';
+                          setChangeProfileAccount({ accountId: acc.id, currentCode: current });
+                          setChangeProfileTarget(current === 'punti' ? 'vantaggi' : 'punti');
+                          setChangeProfileError(null);
+                        }}
+                      >
+                        🔄 Modifica profilo
+                      </Button>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
                     {acc.balance !== undefined && (
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--color-text)' }}>{acc.balance}</div>
-                        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: isVip ? '#f8fafc' : 'var(--color-text)' }}>{acc.balance}</div>
+                        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: isVip ? '#94a3b8' : 'var(--color-text-muted)', fontWeight: 600 }}>
                           Punti Saldo Attuale
                         </div>
                       </div>
                     )}
-                    <Link
-                      to={`/dashboard/loyalty-accounts/${acc.id}/preview`}
-                      className="btn btn-outline btn-sm"
-                      style={{ textDecoration: 'none' }}
-                      title="Visualizza anteprima carta senza modificare credenziali"
-                    >
-                      👁 Anteprima carta
-                    </Link>
                   </div>
                 </div>
 
@@ -568,6 +681,22 @@ export const CustomerDetailPage: React.FC = () => {
                                 🔄 Rigenera credenziale
                               </Button>
                             )}
+                            {canEdit && (
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                title="Revoca la credenziale digitale per questo conto"
+                                onClick={() => {
+                                  setRevokeModalError(null);
+                                  setCredToRevoke({
+                                    credentialId: activeDigitalCred.id,
+                                    accountName: `${customer.first_name} ${customer.last_name} (${acc.profile_name})`,
+                                  });
+                                }}
+                              >
+                                ✕ Revoca credenziale
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -594,6 +723,17 @@ export const CustomerDetailPage: React.FC = () => {
                           <>
                             <div>Carta ID #{activePhysicalCred.card_id}</div>
                             <div>Emessa il: {new Date(activePhysicalCred.issued_at).toLocaleString('it-IT')}</div>
+                            {canEdit && activePhysicalCred.card_id && (
+                              <div style={{ marginTop: '0.5rem' }}>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleUnassignPhysicalCard(activePhysicalCred.card_id!)}
+                                >
+                                  🔗 Disassocia carta
+                                </Button>
+                              </div>
+                            )}
                           </>
                         ) : (
                           'Per associare una carta fisica a questo conto, utilizza la sezione "Carte Fisiche".'
@@ -707,6 +847,51 @@ export const CustomerDetailPage: React.FC = () => {
         </form>
       </Modal>
 
+      {/* Modale Modifica Profilo (Punti ↔ Vantaggi, senza rigenerare credenziali) */}
+      <Modal
+        isOpen={changeProfileAccount !== null}
+        title="Modifica profilo conto"
+        onClose={() => { setChangeProfileAccount(null); setChangeProfileError(null); }}
+      >
+        {changeProfileAccount && (
+          <form onSubmit={handleChangeProfileSubmit}>
+            {changeProfileError && (
+              <div style={{ marginBottom: '1rem' }}>
+                <Alert type="error" message={changeProfileError} onDismiss={() => setChangeProfileError(null)} />
+              </div>
+            )}
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 'var(--radius-md)', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.88rem', color: '#1e40af' }}>
+              🔒 <strong>Nessuna credenziale verrà rigenerata.</strong> Il conto #{changeProfileAccount.accountId} manterrà lo stesso account_id, saldo, storico movimenti, token e URL della carta digitale/fisica.
+            </div>
+            <p style={{ marginBottom: '1rem', fontSize: '0.95rem' }}>
+              Profilo attuale: <strong>{changeProfileAccount.currentCode.toUpperCase()}</strong> → Nuovo profilo: <strong>{changeProfileTarget.toUpperCase()}</strong>
+            </p>
+            <Select
+              label="Nuovo profilo *"
+              options={[
+                allowPunti ? { label: 'Punti (modalità base)', value: 'punti' } : null,
+                allowVantaggi ? { label: 'Vantaggi (punti + offerte)', value: 'vantaggi' } : null,
+              ].filter((o): o is { label: string; value: 'punti' | 'vantaggi' } => o !== null && o.value !== changeProfileAccount.currentCode)}
+              value={changeProfileTarget}
+              onChange={(e) => setChangeProfileTarget(e.target.value as 'punti' | 'vantaggi')}
+            />
+            <div className="modal-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => { setChangeProfileAccount(null); setChangeProfileError(null); }}
+                disabled={isChangingProfile}
+              >
+                Annulla
+              </Button>
+              <Button type="submit" variant="primary" isLoading={isChangingProfile}>
+                Conferma modifica profilo
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       {/* Modale Conferma Rotazione */}
       <Modal
         isOpen={Boolean(credToRotate)}
@@ -742,6 +927,47 @@ export const CustomerDetailPage: React.FC = () => {
               </Button>
               <Button variant="danger" onClick={handleConfirmRotate} isLoading={isRotating}>
                 Rigenera Credenziale
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modale Conferma Revoca Credenziale Digitale */}
+      <Modal
+        isOpen={Boolean(credToRevoke)}
+        title="Conferma Revoca Credenziale Digitale"
+        onClose={() => {
+          setCredToRevoke(null);
+          setRevokeModalError(null);
+        }}
+      >
+        {credToRevoke && (
+          <div>
+            {revokeModalError && (
+              <div style={{ marginBottom: '1rem' }}>
+                <Alert type="error" message={revokeModalError} onDismiss={() => setRevokeModalError(null)} />
+              </div>
+            )}
+            <p>
+              Stai per <strong>revocare la credenziale digitale</strong> per {credToRevoke.accountName}.
+            </p>
+            <p style={{ marginTop: '0.5rem', color: 'var(--color-danger)', fontSize: '0.9rem', fontWeight: 600 }}>
+              ⚠️ Il link e il codice QR smetteranno di funzionare immediatamente. Il cliente non potrà più accedere alla carta digitale finché non ne verrà emessa una nuova. Il saldo punti e lo storico rimangono intatti.
+            </p>
+            <div className="modal-actions">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setCredToRevoke(null);
+                  setRevokeModalError(null);
+                }}
+                disabled={isRevoking}
+              >
+                Annulla
+              </Button>
+              <Button variant="danger" onClick={handleConfirmRevoke} isLoading={isRevoking}>
+                Conferma Revoca
               </Button>
             </div>
           </div>

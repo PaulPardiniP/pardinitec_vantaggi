@@ -303,6 +303,27 @@ export const businessApi = {
     );
     return res.data;
   },
+
+  async verifyAdminPassword(password: string, businessId: number): Promise<{ business: Business; verified: boolean }> {
+    const res = await apiRequest<{ success: boolean; data: { business: Business; verified: boolean } }>('/api/v1/admin/verify-password', {
+      method: 'POST',
+      body: JSON.stringify({ password, business_id: businessId }),
+    });
+    return res.data;
+  },
+
+  async logImpersonateExit(businessId: number): Promise<{ ok: boolean }> {
+    const res = await apiRequest<{ success: boolean; data: { ok: boolean } }>('/api/v1/admin/log-impersonate-exit', {
+      method: 'POST',
+      body: JSON.stringify({ business_id: businessId }),
+    });
+    return res.data;
+  },
+};
+
+export const adminApi = {
+  verifyPassword: businessApi.verifyAdminPassword,
+  logImpersonateExit: businessApi.logImpersonateExit,
 };
 
 // ==================== INVITATIONS (PUBLIC) ====================
@@ -361,6 +382,7 @@ export const customerApi = {
       phone?: string;
       email?: string;
       card_profile_id?: number;
+      include_vip?: boolean;
       privacy_accepted: boolean;
       marketing_accepted?: boolean;
     }
@@ -370,6 +392,10 @@ export const customerApi = {
     access_credential: Credential;
     token: string;
     public_url: string;
+    vip_loyalty_account?: LoyaltyAccount;
+    vip_access_credential?: Credential;
+    vip_token?: string;
+    vip_public_url?: string;
   }> {
     const res = await apiRequest<{
       success: boolean;
@@ -379,6 +405,10 @@ export const customerApi = {
         access_credential: Credential;
         token: string;
         public_url: string;
+        vip_loyalty_account?: LoyaltyAccount;
+        vip_access_credential?: Credential;
+        vip_token?: string;
+        vip_public_url?: string;
       };
     }>(`/api/v1/businesses/${businessId}/customers/onboard`, {
       method: 'POST',
@@ -525,7 +555,34 @@ export const loyaltyApi = {
     );
     return res.data;
   },
+
+  async changeProfile(
+    businessId: number,
+    accountId: number,
+    profileCode: 'punti' | 'vantaggi'
+  ): Promise<any> {
+    const res = await apiRequest<{ success: boolean; data: any }>(
+      `/api/v1/businesses/${businessId}/loyalty/accounts/${accountId}/profile`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ profile_code: profileCode }),
+      }
+    );
+    return res.data;
+  },
+
+  async getVipStats(businessId: number): Promise<{ active_vip_customers: number; can_create_vip_offers: boolean }> {
+    const res = await apiRequest<{ success: boolean; data?: { active_vip_customers: number; can_create_vip_offers: boolean }; active_vip_customers?: number; can_create_vip_offers?: boolean }>(
+      `/api/v1/businesses/${businessId}/loyalty/vip-stats`
+    );
+    const data = res?.data ?? res ?? {};
+    return {
+      active_vip_customers: Number(data.active_vip_customers ?? 0),
+      can_create_vip_offers: Boolean(data.can_create_vip_offers ?? false),
+    };
+  },
 };
+
 
 // ==================== POINTS ====================
 export const pointsApi = {
@@ -874,6 +931,25 @@ export const cardsApi = {
       body: JSON.stringify({ new_loyalty_account_id: newLoyaltyAccountId }),
     });
     return res.data;
+  },
+
+  async unassign(
+    businessId: number,
+    cardId: number
+  ): Promise<{ card: Card }> {
+    const res = await apiRequest<{
+      success: boolean;
+      data: { card: Card };
+    }>(`/api/v1/businesses/${businessId}/cards/${cardId}/unassign`, {
+      method: 'POST',
+    });
+    return res.data;
+  },
+
+  async delete(cardId: number): Promise<void> {
+    await apiRequest(`/api/v1/admin/cards/${cardId}`, {
+      method: 'DELETE',
+    });
   },
 };
 

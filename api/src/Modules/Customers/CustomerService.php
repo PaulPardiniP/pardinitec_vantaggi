@@ -221,19 +221,29 @@ final class CustomerService
                 $this->recordConsent($businessId, $customerId, 'marketing', 'granted', $source);
             }
 
-            // D. Crear cuenta de fidelización con saldo 0
+            // D. Crear cuenta de fidelización estándar con saldo 0
             $account = $this->loyaltyService->createAccount($businessId, $customerId, $profile['id']);
 
-            // E. Emitir credencial digital (32 bytes aleatorios, guarda SHA-256 en DB)
+            // E. Emitir credencial digital para cuenta estándar
             $credential = $this->credentialService->issueDigitalCredential($businessId, $account['id']);
 
-            // F. Registrar auditoría mínima sin PII (Regla 6)
+            // F. Si se solicitó perfil VIP adicional, crear cuenta VIP y credencial digital independiente
+            $includeVip = filter_var($data['include_vip'] ?? ($data['add_vip'] ?? false), FILTER_VALIDATE_BOOLEAN);
+            $vipAccount = null;
+            $vipCredential = null;
+            if ($includeVip) {
+                $vipAccount = $this->loyaltyService->createAccount($businessId, $customerId, 'vip');
+                $vipCredential = $this->credentialService->issueDigitalCredential($businessId, $vipAccount['id']);
+            }
+
+            // G. Registrar auditoría mínima sin PII (Regla 6)
             $this->auditLogger->log(
                 'customer.onboard',
                 'customers',
                 $customerId,
                 [
                     'card_profile' => $profile['code'],
+                    'include_vip' => $includeVip,
                     'privacy_accepted' => true,
                     'marketing_accepted' => $marketingAccepted,
                 ],
@@ -241,10 +251,10 @@ final class CustomerService
                 $businessId
             );
 
-            // G. Confirmar transacción
+            // H. Confirmar transacción
             $this->pdo->commit();
 
-            return [
+            $result = [
                 'customer' => [
                     'id' => $customerId,
                     'business_id' => $businessId,
@@ -275,6 +285,27 @@ final class CustomerService
                 'token' => $credential['token'], // Entregado en texto plano POR ÚNICA VEZ
                 'public_url' => "/c/{$credential['token']}",
             ];
+
+            if ($vipAccount !== null && $vipCredential !== null) {
+                $result['vip_loyalty_account'] = [
+                    'id' => $vipAccount['id'],
+                    'card_profile_id' => $vipAccount['card_profile_id'],
+                    'profile_code' => 'vip',
+                    'profile_name' => 'VIP',
+                    'balance' => 0,
+                    'status' => 'active',
+                ];
+                $result['vip_access_credential'] = [
+                    'id' => $vipCredential['id'],
+                    'type' => 'digital',
+                    'status' => 'active',
+                    'issued_at' => $vipCredential['issued_at'],
+                ];
+                $result['vip_token'] = $vipCredential['token'];
+                $result['vip_public_url'] = "/c/{$vipCredential['token']}";
+            }
+
+            return $result;
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
@@ -332,17 +363,17 @@ final class CustomerService
         $perPage = max(1, min(100, $perPage));
         $offset = ($page - 1) * $perPage;
 
-        $where = ['`business_id` = :business_id'];
+        $where = ['c.`business_id` = :business_id'];
         $params = ['business_id' => $businessId];
 
         if (!empty($filters['search'])) {
             $rawSearch = trim((string) $filters['search']);
             $search = '%' . $rawSearch . '%';
             if (ctype_digit($rawSearch)) {
-                $where[] = "(`id` = :search_id OR `first_name` LIKE :search_fname OR `last_name` LIKE :search_lname OR `phone` LIKE :search_phone OR `email` LIKE :search_email)";
+                $where[] = "(c.`id` = :search_id OR c.`first_name` LIKE :search_fname OR c.`last_name` LIKE :search_lname OR c.`phone` LIKE :search_phone OR c.`email` LIKE :search_email)";
                 $params['search_id'] = (int) $rawSearch;
             } else {
-                $where[] = "(`first_name` LIKE :search_fname OR `last_name` LIKE :search_lname OR `phone` LIKE :search_phone OR `email` LIKE :search_email)";
+                $where[] = "(c.`first_name` LIKE :search_fname OR c.`last_name` LIKE :search_lname OR c.`phone` LIKE :search_phone OR c.`email` LIKE :search_email)";
             }
             $params['search_fname'] = $search;
             $params['search_lname'] = $search;
@@ -351,34 +382,39 @@ final class CustomerService
         }
 
         if (!empty($filters['phone'])) {
-            $where[] = "`phone` LIKE :phone";
+            $where[] = "c.`phone` LIKE :phone";
             $params['phone'] = '%' . trim((string) $filters['phone']) . '%';
         }
 
         if (!empty($filters['email'])) {
-            $where[] = "`email` LIKE :email";
+            $where[] = "c.`email` LIKE :email";
             $params['email'] = '%' . trim((string) $filters['email']) . '%';
         }
 
         $whereSql = implode(' AND ', $where);
 
         // Conteo eficiente mediante aggregate COUNT(*)
-        $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM `customers` WHERE {$whereSql}");
+        $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM `customers` c WHERE {$whereSql}");
         $countStmt->execute($params);
         $total = (int) $countStmt->fetchColumn();
 
         // Consulta paginada con LIMIT y OFFSET
         $dataStmt = $this->pdo->prepare("
-            SELECT `id`, `business_id`, `first_name`, `last_name`, `phone`, `email`, `created_at`
-            FROM `customers`
+            SELECT c.`id`, c.`business_id`, c.`first_name`, c.`last_name`, c.`phone`, c.`email`, c.`created_at`,
+                   GROUP_CONCAT(DISTINCT cp.`code` ORDER BY cp.`id` ASC) AS `profile_codes`
+            FROM `customers` c
+            LEFT JOIN `loyalty_accounts` la ON la.`customer_id` = c.`id` AND la.`business_id` = c.`business_id` AND la.`status` = 'active'
+            LEFT JOIN `card_profiles` cp ON cp.`id` = la.`card_profile_id`
             WHERE {$whereSql}
-            ORDER BY `id` DESC
+            GROUP BY c.`id`
+            ORDER BY c.`id` DESC
             LIMIT {$perPage} OFFSET {$offset}
         ");
         $dataStmt->execute($params);
         $rows = $dataStmt->fetchAll(PDO::FETCH_ASSOC);
 
         $items = array_map(static function (array $row): array {
+            $profiles = !empty($row['profile_codes']) ? explode(',', (string) $row['profile_codes']) : [];
             return [
                 'id' => (int) $row['id'],
                 'business_id' => (int) $row['business_id'],
@@ -387,6 +423,7 @@ final class CustomerService
                 'phone' => $row['phone'] !== null ? (string) $row['phone'] : null,
                 'email' => $row['email'] !== null ? (string) $row['email'] : null,
                 'created_at' => (string) $row['created_at'],
+                'profiles' => $profiles,
             ];
         }, $rows);
 

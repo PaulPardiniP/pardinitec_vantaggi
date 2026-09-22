@@ -351,13 +351,6 @@ export const VantaggiPage: React.FC = () => {
           <EmptyState
             title="Nessun vantaggio attivo"
             description="Crea il primo vantaggio promozionale o sconto per i tuoi clienti Vantaggi."
-            action={
-              canManage ? (
-                <Button variant="primary" onClick={handleOpenCreate}>
-                  + Nuovo vantaggio
-                </Button>
-              ) : undefined
-            }
           />
         ) : (
           <div className="table-responsive">

@@ -735,13 +735,16 @@
 }
 
 .public-card-header.header-punti {
-  background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 70%, #ea580c 100%);
+  background: #ea580c;
+  color: #ffffff;
 }
 .public-card-header.header-vantaggi {
-  background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 60%, #2563eb 100%);
+  background: #2563eb;
+  color: #ffffff;
 }
 .public-card-header.header-vip {
-  background: linear-gradient(135deg, #1e1b4b 0%, #2e1065 40%, #4c1d95 80%, #78350f 100%);
+  background: #111827;
+  color: #ffffff;
 }
 
 .card-preview-banner {

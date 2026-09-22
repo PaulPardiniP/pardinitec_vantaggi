@@ -118,6 +118,10 @@ export const LoginPage: React.FC = () => {
                 Accedi al Sistema
               </Button>
             </div>
+
+            <div style={{ marginTop: '1.25rem', textAlign: 'center', fontSize: '0.82rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+              Non hai ancora un account o hai problemi di accesso? Contatta il titolare del punto vendita per ricevere o rinnovare il link di invito.
+            </div>
           </form>
         </div>
       </div>

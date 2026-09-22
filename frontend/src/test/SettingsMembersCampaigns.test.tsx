@@ -95,7 +95,7 @@ describe('Verifica SettingsPage, CampaignsPage e MembersPage', () => {
       expect(screen.getByText('Campagne')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Nessuna campagna disponibile.')).toBeInTheDocument();
+    expect(screen.getByText('Nessuna campagna programmata')).toBeInTheDocument();
     expect(screen.queryByText(/CampaÃ/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/campaÃ/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/No hay/i)).not.toBeInTheDocument();
@@ -178,7 +178,7 @@ describe('Verifica SettingsPage, CampaignsPage e MembersPage', () => {
     fireEvent.change(screen.getByPlaceholderText('es. Bianchi'), { target: { value: 'Bianchi' } });
 
     // Invia
-    fireEvent.click(screen.getByRole('button', { name: /Invia Invito/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Invia Invito$/i }));
 
     await waitFor(() => {
       expect(createInvSpy).toHaveBeenCalledWith(10, {

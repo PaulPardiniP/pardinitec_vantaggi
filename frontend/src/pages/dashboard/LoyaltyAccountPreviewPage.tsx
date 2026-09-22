@@ -181,24 +181,62 @@ export const LoyaltyAccountPreviewPage: React.FC = () => {
             {/* 1. Offerte: Solo se abilitato per il profilo e presenti */}
             {canShowOffers && (
               <Button
-                variant="outline"
+                variant="primary"
                 className="btn-touch"
-                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  textAlign: 'left',
+                  ...(profileCode === 'vip'
+                    ? {
+                        backgroundColor: '#111827',
+                        borderColor: '#f59e0b',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                      }
+                    : profileCode === 'vantaggi'
+                    ? {
+                        backgroundColor: '#2563eb',
+                        borderColor: '#2563eb',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                      }
+                    : {}),
+                }}
                 onClick={() => setIsOffersModalOpen(true)}
               >
                 <span>
-                  🎁 {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
+                  <span style={{ color: profileCode === 'vip' ? '#f59e0b' : undefined, marginRight: '0.35rem' }}>
+                    {profileCode === 'vip' ? '⭐' : '🎟️'}
+                  </span>
+                  {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
                 </span>
-                <span style={{ fontSize: '1.1rem' }}>➔</span>
+                <span style={{ fontSize: '1.1rem', color: profileCode === 'vip' ? '#f59e0b' : undefined }}>➔</span>
               </Button>
             )}
 
             {/* 2. Catalogo Premi: Solo se presenti */}
             {canShowRewards && (
               <Button
-                variant="outline"
+                variant="secondary"
                 className="btn-touch"
-                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  textAlign: 'left',
+                  ...(profileCode === 'punti'
+                    ? {
+                        backgroundColor: '#ea580c',
+                        borderColor: '#ea580c',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                      }
+                    : {}),
+                }}
                 onClick={() => setIsRewardsModalOpen(true)}
               >
                 <span>

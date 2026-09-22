@@ -128,7 +128,27 @@ final class LoyaltyService
             throw new InvalidArgumentException("Perfil de fidelización inválido o inactivo: '{$profileIdOrCode}'.");
         }
 
-        // 3. Reglas de Negocio Definitivas (Punti, Vantaggi, VIP):
+        $targetCode = $profile['code'];
+
+        // 3. Validación Contractual Obligatoria según paquetes contratados por el comercio
+        $capabilityService = new CapabilityService($this->pdo);
+        $packages = $capabilityService->getBusinessPackages($businessId);
+
+        if ($targetCode === 'punti') {
+            if (empty($packages['punti']) && empty($packages['vantaggi'])) {
+                throw new InvalidArgumentException('Il profilo Punti non è incluso nei pacchetti contrattuali del commercio.');
+            }
+        } elseif ($targetCode === 'vantaggi') {
+            if (empty($packages['vantaggi'])) {
+                throw new InvalidArgumentException('Il profilo Vantaggi non è incluso nei pacchetti contrattuali del commercio.');
+            }
+        } elseif ($targetCode === 'vip') {
+            if (empty($packages['vip'])) {
+                throw new InvalidArgumentException('Il profilo VIP non è incluso nei pacchetti contrattuali del commercio.');
+            }
+        }
+
+        // 4. Reglas de Negocio Definitivas (Punti, Vantaggi, VIP):
         $existingStmt = $this->pdo->prepare("
             SELECT la.`id`, la.`card_profile_id`, la.`balance`, la.`status`,
                    cp.`code` AS `profile_code`, cp.`name` AS `profile_name`
@@ -153,8 +173,6 @@ final class LoyaltyService
                 $standardAccount = $acc;
             }
         }
-
-        $targetCode = $profile['code'];
 
         if ($targetCode === 'vip') {
             if ($hasVip) {
@@ -352,10 +370,12 @@ final class LoyaltyService
     {
         $stmt = $this->pdo->prepare("
             SELECT la.*, cp.`code` AS `profile_code`, cp.`name` AS `profile_name`,
-                   b.`name` AS `business_name`, b.`slug` AS `business_slug`
+                   b.`name` AS `business_name`, b.`slug` AS `business_slug`,
+                   cust.`first_name` AS `customer_first_name`, cust.`last_name` AS `customer_last_name`
             FROM `loyalty_accounts` la
             INNER JOIN `card_profiles` cp ON la.`card_profile_id` = cp.`id`
             INNER JOIN `businesses` b ON la.`business_id` = b.`id`
+            LEFT JOIN `customers` cust ON la.`customer_id` = cust.`id`
             WHERE la.`id` = :id AND la.`business_id` = :business_id
             LIMIT 1
         ");
@@ -416,6 +436,15 @@ final class LoyaltyService
             'loyalty_account' => $loyaltyAccountData,
         ];
 
+        if (!empty($row['customer_id'])) {
+            $preview['customer'] = [
+                'id' => (int) $row['customer_id'],
+                'first_name' => (string) ($row['customer_first_name'] ?? ''),
+                'last_name' => (string) ($row['customer_last_name'] ?? ''),
+                'display_name' => trim(($row['customer_first_name'] ?? '') . ' ' . ($row['customer_last_name'] ?? '')),
+            ];
+        }
+
         if ($hasPoints) {
             $preview['program'] = $programService->getProgram($businessId);
             $rawTx = $pointsService->getAccountTransactions($businessId, $accountId, 1, 20)['data'];
@@ -443,5 +472,76 @@ final class LoyaltyService
         }
 
         return $preview;
+    }
+
+    /**
+     * Modifica il profilo di un conto standard (Punti <-> Vantaggi) senza alterare account_id,
+     * saldo, storico movimenti, consensi né credenziali fisiche/digitali (token e URL permangono invariati).
+     *
+     * @return array<string, mixed>
+     */
+    public function changeAccountProfile(int $businessId, int $accountId, int|string $newProfileIdOrCode): array
+    {
+        $account = $this->getAccount($businessId, $accountId);
+        if (!$account) {
+            throw new InvalidArgumentException('Conto di fidelizzazione non trovato per questo commercio.');
+        }
+
+        if ($account['status'] !== 'active') {
+            throw new InvalidArgumentException('Impossibile modificare il profilo di un conto non attivo.');
+        }
+
+        $currentProfileCode = $account['profile_code'];
+        if ($currentProfileCode === 'vip') {
+            throw new InvalidArgumentException('I conti VIP sono autonomi e non possono essere convertiti in conti standard.');
+        }
+
+        $targetProfile = is_int($newProfileIdOrCode)
+            ? $this->getProfileById($newProfileIdOrCode)
+            : $this->getProfileByCode((string) $newProfileIdOrCode);
+
+        if (!$targetProfile) {
+            throw new InvalidArgumentException("Profilo di fidelizzazione target non valido: '{$newProfileIdOrCode}'.");
+        }
+
+        $targetCode = $targetProfile['code'];
+        if ($targetCode === 'vip') {
+            throw new InvalidArgumentException('Un conto standard non può essere convertito in conto VIP. Crea un conto VIP separato.');
+        }
+
+        // Validación contractual
+        $capabilityService = new CapabilityService($this->pdo);
+        $packages = $capabilityService->getBusinessPackages($businessId);
+
+        if ($targetCode === 'vantaggi' && empty($packages['vantaggi'])) {
+            throw new InvalidArgumentException('Il profilo Vantaggi non è incluso nei pacchetti contrattuali del commercio.');
+        }
+        if ($targetCode === 'punti' && empty($packages['punti']) && empty($packages['vantaggi'])) {
+            throw new InvalidArgumentException('Il profilo Punti non è incluso nei pacchetti contrattuali del commercio.');
+        }
+
+        if ($currentProfileCode === $targetCode) {
+            return $account;
+        }
+
+        // Actualizar card_profile_id manteniendo account_id, saldo y credenciales intactos
+        $updStmt = $this->pdo->prepare("
+            UPDATE `loyalty_accounts`
+            SET `card_profile_id` = :new_profile_id,
+                `updated_at` = UTC_TIMESTAMP()
+            WHERE `id` = :account_id AND `business_id` = :business_id
+        ");
+        $updStmt->execute([
+            'new_profile_id' => $targetProfile['id'],
+            'account_id' => $accountId,
+            'business_id' => $businessId,
+        ]);
+
+        $updated = $this->getAccount($businessId, $accountId);
+        if (!$updated) {
+            throw new InvalidArgumentException('Errore durante l\'aggiornamento del profilo.');
+        }
+        $updated['upgraded'] = ($targetCode === 'vantaggi');
+        return $updated;
     }
 }

@@ -424,6 +424,7 @@ export const PublicCardPage: React.FC = () => {
       });
       setIsPointsModalOpen(false);
       setPointsModalError(null);
+      setScanSessionUsed(true);
       await fetchCard();
     } catch (err: any) {
       setPointsModalError(err.message || 'Errore durante l\'aggiornamento dei punti.');
@@ -763,9 +764,11 @@ export const PublicCardPage: React.FC = () => {
                   const allowVantaggi = businessPackages ? businessPackages.vantaggi === true : false;
                   const allowVip = businessPackages ? businessPackages.vip === true : false;
 
+                  const hasStandardAcc = hasPuntiAcc || hasVantaggiAcc;
+
                   const missingProfiles: Array<{ code: 'punti' | 'vantaggi' | 'vip'; name: string; icon: string }> = [];
-                  if (allowPunti && !hasPuntiAcc) missingProfiles.push({ code: 'punti', name: 'Punti', icon: '⭐' });
-                  if (allowVantaggi && !hasVantaggiAcc) missingProfiles.push({ code: 'vantaggi', name: 'Vantaggi', icon: '🏷️' });
+                  if (allowPunti && !hasStandardAcc) missingProfiles.push({ code: 'punti', name: 'Punti', icon: '⭐' });
+                  if (allowVantaggi && !hasStandardAcc) missingProfiles.push({ code: 'vantaggi', name: 'Vantaggi', icon: '🏷️' });
                   if (allowVip && !hasVipAcc) missingProfiles.push({ code: 'vip', name: 'VIP', icon: '👑' });
 
                   if (missingProfiles.length === 0) return null;
@@ -891,13 +894,14 @@ export const PublicCardPage: React.FC = () => {
                 fontWeight: 700,
                 textTransform: 'uppercase',
                 marginBottom: '0.5rem',
+                color: '#ffffff',
               }}
             >
               Ficha Operativa Esercente
             </div>
           )}
 
-          <h1 style={{ fontSize: '1.6rem', fontWeight: 800, margin: 0 }}>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>
             {cardData.business?.name || 'Pardinitec Vantaggi'}
           </h1>
 
@@ -905,12 +909,14 @@ export const PublicCardPage: React.FC = () => {
             <span
               className="badge"
               style={{
-                background: 'rgba(255, 255, 255, 0.25)',
-                color: '#ffffff',
-                border: '1px solid rgba(255, 255, 255, 0.4)',
+                background: profileCode === 'vip' ? 'rgba(217, 119, 6, 0.2)' : 'rgba(255, 255, 255, 0.25)',
+                color: profileCode === 'vip' ? '#fef3c7' : '#ffffff',
+                border: profileCode === 'vip' ? '1px solid rgba(245, 158, 11, 0.55)' : '1px solid rgba(255, 255, 255, 0.4)',
+                fontWeight: 700,
+                letterSpacing: '0.04em',
               }}
             >
-              Profilo {cardData.loyalty_account?.profile_name || profileCode.toUpperCase()}
+              PROFILO {(cardData.loyalty_account?.profile_name || profileCode).toUpperCase()}
             </span>
           </div>
         </div>
@@ -966,13 +972,38 @@ export const PublicCardPage: React.FC = () => {
               )}
             </div>
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', margin: '0.75rem 0 0 0', lineHeight: 1.4 }}>
-              Mostra questo codice in cassa per accumulare punti o utilizzare i tuoi vantaggi.
+              {profileCode === 'vip'
+                ? 'Mostra questo codice per accedere ai tuoi benefici esclusivi VIP.'
+                : 'Mostra questo codice in cassa per accumulare punti o utilizzare i tuoi vantaggi.'}
             </p>
           </div>
+
+          {/* Dati Titolare Carta (In vista pubblica: Nome + Iniziale cognome es. Mario R.) */}
+          {!isStaff && cardData.customer && (cardData.customer.display_name || cardData.customer.first_name) && (
+            <div
+              data-testid="public-card-holder"
+              style={{
+                background: '#f8fafc',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.65rem 1rem',
+                marginBottom: '1.25rem',
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                Titolare Carta
+              </div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                {cardData.customer.display_name || `${cardData.customer.first_name} ${cardData.customer.last_name || ''}`.trim()}
+              </div>
+            </div>
+          )}
 
           {/* Dati Cliente (Visibili SOLO in modalità Staff) */}
           {isStaff && cardData.customer && (
             <div
+              data-testid="staff-customer-info"
               style={{
                 background: '#f8fafc',
                 border: '1px solid var(--color-border)',
@@ -1066,200 +1097,220 @@ export const PublicCardPage: React.FC = () => {
               ) : (
                 <>
 
-              {/* Bottoni Tattili Grandi: +1, +5, +10 */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-touch"
-                  style={{
-                    background: '#ffffff',
-                    border: '2px solid #22c55e',
-                    color: '#15803d',
-                    fontWeight: 800,
-                    fontSize: '1.25rem',
-                    padding: '0.85rem 0.25rem',
-                    borderRadius: 'var(--radius-md)',
-                    cursor: 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                    transition: 'all 0.1s ease',
-                  }}
-                  disabled={isSubmittingQuickCredit}
-                  onClick={() => handleQuickCredit(1)}
-                >
-                  +1 pt
-                </button>
+              {/* Opzioni di accredito al banco */}
+              {(() => {
+                const isPointsPerAmount = cardData.program?.program_type === 'points_per_amount' || (cardData.program as any)?.mode === 'points_per_amount';
 
-                <button
-                  type="button"
-                  className="btn btn-touch"
-                  style={{
-                    background: '#ffffff',
-                    border: '2px solid #22c55e',
-                    color: '#15803d',
-                    fontWeight: 800,
-                    fontSize: '1.25rem',
-                    padding: '0.85rem 0.25rem',
-                    borderRadius: 'var(--radius-md)',
-                    cursor: 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                    transition: 'all 0.1s ease',
-                  }}
-                  disabled={isSubmittingQuickCredit}
-                  onClick={() => handleQuickCredit(5)}
-                >
-                  +5 pt
-                </button>
+                return (
+                  <>
+                    {/* Se configurato per spesa, 'Da acquisto' è principale */}
+                    {isPointsPerAmount && (
+                      <div style={{ marginBottom: '0.75rem' }}>
+                        <button
+                          type="button"
+                          className={`btn btn-touch ${quickCreditActiveTab === 'receipt' ? 'btn-primary' : 'btn-outline'}`}
+                          style={{
+                            width: '100%',
+                            fontWeight: 800,
+                            padding: '0.85rem',
+                            fontSize: '1.05rem',
+                            borderRadius: 'var(--radius-md)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem',
+                          }}
+                          disabled={isSubmittingQuickCredit}
+                          onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'receipt' ? null : 'receipt')}
+                        >
+                          🛒 Accredita Da Acquisto (Scontrino)
+                        </button>
+                      </div>
+                    )}
 
-                <button
-                  type="button"
-                  className="btn btn-touch"
-                  style={{
-                    background: '#ffffff',
-                    border: '2px solid #22c55e',
-                    color: '#15803d',
-                    fontWeight: 800,
-                    fontSize: '1.25rem',
-                    padding: '0.85rem 0.25rem',
-                    borderRadius: 'var(--radius-md)',
-                    cursor: 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                    transition: 'all 0.1s ease',
-                  }}
-                  disabled={isSubmittingQuickCredit}
-                  onClick={() => handleQuickCredit(10)}
-                >
-                  +10 pt
-                </button>
-              </div>
+                    {/* Sottomodalità: Da acquisto */}
+                    {quickCreditActiveTab === 'receipt' && isPointsPerAmount && (
+                      <form
+                        onSubmit={handleQuickReceiptSubmit}
+                        style={{
+                          marginBottom: '0.75rem',
+                          padding: '0.75rem',
+                          background: '#ffffff',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid #bbf7d0',
+                        }}
+                      >
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                          Totale spesa scontrino (€):
+                        </label>
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            required
+                            value={quickReceiptAmount}
+                            onChange={(e) => setQuickReceiptAmount(e.target.value)}
+                            placeholder="es. 45.00"
+                            autoFocus
+                            style={{ margin: 0 }}
+                          />
+                        </div>
 
-              {/* Opzioni: Altro importo | Da acquisto */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <button
-                  type="button"
-                  className={`btn btn-touch btn-sm ${quickCreditActiveTab === 'custom' ? 'btn-primary' : 'btn-outline'}`}
-                  style={{
-                    fontWeight: 700,
-                    padding: '0.65rem 0.5rem',
-                    fontSize: '0.9rem',
-                    borderRadius: 'var(--radius-md)',
-                  }}
-                  disabled={isSubmittingQuickCredit}
-                  onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'custom' ? null : 'custom')}
-                >
-                  ✍️ Altro importo
-                </button>
+                        {quickReceiptCalcError && (
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-danger)', marginBottom: '0.5rem' }}>
+                            {quickReceiptCalcError}
+                          </div>
+                        )}
 
-                <button
-                  type="button"
-                  className={`btn btn-touch btn-sm ${quickCreditActiveTab === 'receipt' ? 'btn-primary' : 'btn-outline'}`}
-                  style={{
-                    fontWeight: 700,
-                    padding: '0.65rem 0.5rem',
-                    fontSize: '0.9rem',
-                    borderRadius: 'var(--radius-md)',
-                  }}
-                  disabled={isSubmittingQuickCredit}
-                  onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'receipt' ? null : 'receipt')}
-                >
-                  🛒 Da acquisto
-                </button>
-              </div>
+                        {isCalculatingQuickReceipt && (
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                            Calcolo punti in corso...
+                          </div>
+                        )}
 
-              {/* Sottomodalità: Altro importo */}
-              {quickCreditActiveTab === 'custom' && (
-                <form
-                  onSubmit={handleQuickCustomSubmit}
-                  style={{
-                    marginTop: '0.75rem',
-                    padding: '0.75rem',
-                    background: '#ffffff',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid #bbf7d0',
-                  }}
-                >
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                    Punti da accreditare:
-                  </label>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '120px' }}>
-                      <Input
-                        type="number"
-                        min="1"
-                        step="1"
-                        required
-                        value={quickCustomPoints}
-                        onChange={(e) => setQuickCustomPoints(e.target.value)}
-                        placeholder="es. 25"
-                        autoFocus
-                        style={{ margin: 0 }}
-                      />
+                        {quickReceiptCalculatedPoints !== null && !quickReceiptCalcError && (
+                          <div style={{ fontSize: '0.9rem', color: '#166534', fontWeight: 700, marginBottom: '0.5rem' }}>
+                            Punti calcolati: +{quickReceiptCalculatedPoints} pt
+                          </div>
+                        )}
+
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          size="md"
+                          style={{ width: '100%' }}
+                          isLoading={isSubmittingQuickCredit}
+                          disabled={quickReceiptCalculatedPoints === null || quickReceiptCalculatedPoints <= 0}
+                        >
+                          ✓ Conferma accredito ({quickReceiptCalculatedPoints ?? 0} pt)
+                        </Button>
+                      </form>
+                    )}
+
+                    {/* Bottoni Tattili Grandi: +1, +5, +10 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-touch"
+                        style={{
+                          background: '#ffffff',
+                          border: '2px solid #22c55e',
+                          color: '#15803d',
+                          fontWeight: 800,
+                          fontSize: '1.25rem',
+                          padding: '0.85rem 0.25rem',
+                          borderRadius: 'var(--radius-md)',
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                          transition: 'all 0.1s ease',
+                        }}
+                        disabled={isSubmittingQuickCredit}
+                        onClick={() => handleQuickCredit(1)}
+                      >
+                        +1 pt
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-touch"
+                        style={{
+                          background: '#ffffff',
+                          border: '2px solid #22c55e',
+                          color: '#15803d',
+                          fontWeight: 800,
+                          fontSize: '1.25rem',
+                          padding: '0.85rem 0.25rem',
+                          borderRadius: 'var(--radius-md)',
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                          transition: 'all 0.1s ease',
+                        }}
+                        disabled={isSubmittingQuickCredit}
+                        onClick={() => handleQuickCredit(5)}
+                      >
+                        +5 pt
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-touch"
+                        style={{
+                          background: '#ffffff',
+                          border: '2px solid #22c55e',
+                          color: '#15803d',
+                          fontWeight: 800,
+                          fontSize: '1.25rem',
+                          padding: '0.85rem 0.25rem',
+                          borderRadius: 'var(--radius-md)',
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                          transition: 'all 0.1s ease',
+                        }}
+                        disabled={isSubmittingQuickCredit}
+                        onClick={() => handleQuickCredit(10)}
+                      >
+                        +10 pt
+                      </button>
                     </div>
-                    <Button type="submit" variant="primary" size="md" isLoading={isSubmittingQuickCredit}>
-                      ✓ Accredita
-                    </Button>
-                  </div>
-                </form>
-              )}
 
-              {/* Sottomodalità: Da acquisto */}
-              {quickCreditActiveTab === 'receipt' && (
-                <form
-                  onSubmit={handleQuickReceiptSubmit}
-                  style={{
-                    marginTop: '0.75rem',
-                    padding: '0.75rem',
-                    background: '#ffffff',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid #bbf7d0',
-                  }}
-                >
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                    Totale spesa scontrino (€):
-                  </label>
-                  <div style={{ marginBottom: '0.5rem' }}>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={quickReceiptAmount}
-                      onChange={(e) => setQuickReceiptAmount(e.target.value)}
-                      placeholder="es. 45.00"
-                      autoFocus
-                      style={{ margin: 0 }}
-                    />
-                  </div>
-
-                  {quickReceiptCalcError && (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--color-danger)', marginBottom: '0.5rem' }}>
-                      {quickReceiptCalcError}
+                    {/* Opzione: Altro importo */}
+                    <div>
+                      <button
+                        type="button"
+                        className={`btn btn-touch btn-sm ${quickCreditActiveTab === 'custom' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{
+                          width: '100%',
+                          fontWeight: 700,
+                          padding: '0.65rem 0.5rem',
+                          fontSize: '0.9rem',
+                          borderRadius: 'var(--radius-md)',
+                        }}
+                        disabled={isSubmittingQuickCredit}
+                        onClick={() => setQuickCreditActiveTab(quickCreditActiveTab === 'custom' ? null : 'custom')}
+                      >
+                        ✍️ Altro importo punti
+                      </button>
                     </div>
-                  )}
 
-                  {isCalculatingQuickReceipt && (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-                      Calcolo punti in corso...
-                    </div>
-                  )}
-
-                  {quickReceiptCalculatedPoints !== null && !quickReceiptCalcError && (
-                    <div style={{ fontSize: '0.9rem', color: '#166534', fontWeight: 700, marginBottom: '0.5rem' }}>
-                      Punti calcolati: +{quickReceiptCalculatedPoints} pt
-                    </div>
-                  )}
-
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    style={{ width: '100%' }}
-                    isLoading={isSubmittingQuickCredit}
-                    disabled={quickReceiptCalculatedPoints === null || quickReceiptCalculatedPoints <= 0}
-                  >
-                    ✓ Conferma accredito ({quickReceiptCalculatedPoints ?? 0} pt)
-                  </Button>
-                </form>
-              )}
+                    {/* Sottomodalità: Altro importo */}
+                    {quickCreditActiveTab === 'custom' && (
+                      <form
+                        onSubmit={handleQuickCustomSubmit}
+                        style={{
+                          marginTop: '0.75rem',
+                          padding: '0.75rem',
+                          background: '#ffffff',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid #bbf7d0',
+                        }}
+                      >
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                          Punti da accreditare:
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <div style={{ flex: 1, minWidth: '120px' }}>
+                            <Input
+                              type="number"
+                              min="1"
+                              step="1"
+                              required
+                              value={quickCustomPoints}
+                              onChange={(e) => setQuickCustomPoints(e.target.value)}
+                              placeholder="es. 25"
+                              autoFocus
+                              style={{ margin: 0 }}
+                            />
+                          </div>
+                          <Button type="submit" variant="primary" size="md" isLoading={isSubmittingQuickCredit}>
+                            ✓ Accredita
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Rettifica Manuale Avanzata */}
               <div style={{ marginTop: '0.75rem', textAlign: 'right' }}>
@@ -1285,8 +1336,8 @@ export const PublicCardPage: React.FC = () => {
           )}
 
 
-          {/* Azioni Operative Secondarie: Riscatto Premi (se abilitato e presenti) */}
-          {isStaff && cardData.actions?.can_redeem_rewards && rewardsCount > 0 && (
+          {/* Azioni Operative Secondarie: Riscatto Premi (se abilitato, presenti e non bloccato da scan) */}
+          {isStaff && !scanSessionUsed && cardData.actions?.can_redeem_rewards && rewardsCount > 0 && (
             <div style={{ marginBottom: '1.25rem' }}>
               <Button
                 variant="secondary"
@@ -1307,13 +1358,38 @@ export const PublicCardPage: React.FC = () => {
               <Button
                 variant="primary"
                 className="btn-touch"
-                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  textAlign: 'left',
+                  ...(profileCode === 'vip'
+                    ? {
+                        backgroundColor: '#111827',
+                        borderColor: '#f59e0b',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                      }
+                    : profileCode === 'vantaggi'
+                    ? {
+                        backgroundColor: '#2563eb',
+                        borderColor: '#2563eb',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                      }
+                    : {}),
+                }}
                 onClick={() => setIsOffersModalOpen(true)}
               >
                 <span>
-                  🎟️ {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
+                  <span style={{ color: profileCode === 'vip' ? '#f59e0b' : undefined, marginRight: '0.35rem' }}>
+                    {profileCode === 'vip' ? '⭐' : '🎟️'}
+                  </span>
+                  {profileCode === 'vip' ? 'Offerte Esclusive VIP' : 'Offerte Vantaggi'} ({offersCount})
                 </span>
-                <span style={{ fontSize: '1.1rem' }}>➔</span>
+                <span style={{ fontSize: '1.1rem', color: profileCode === 'vip' ? '#f59e0b' : undefined }}>➔</span>
               </Button>
             )}
 
@@ -1322,27 +1398,48 @@ export const PublicCardPage: React.FC = () => {
               <Button
                 variant="secondary"
                 className="btn-touch"
-                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  textAlign: 'left',
+                  ...(profileCode === 'punti'
+                    ? {
+                        backgroundColor: '#ea580c',
+                        borderColor: '#ea580c',
+                        borderWidth: '1.5px',
+                        borderStyle: 'solid',
+                        color: '#ffffff',
+                      }
+                    : {}),
+                }}
                 onClick={() => setIsRewardsModalOpen(true)}
               >
                 <span>
-                  🏆 {profileCode === 'vip' ? 'Premi VIP' : 'Vedi premi'} ({rewardsCount})
+                  🏆 {profileCode === 'vip' ? 'Premi VIP' : 'Premi con punti'} ({rewardsCount})
                 </span>
                 <span style={{ fontSize: '1.1rem' }}>➔</span>
               </Button>
             )}
 
-            {/* 3. Storico Punti: Solo se presente capacità punti e movimenti */}
+            {/* 3. Storico Punti: Solo se presente capacità punti e movimenti (link secondario discreto) */}
             {canShowHistory && (
-              <Button
-                variant="outline"
-                className="btn-touch"
-                style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
-                onClick={() => setIsHistoryModalOpen(true)}
-              >
-                <span>📜 Storico punti ({transactionsCount})</span>
-                <span style={{ fontSize: '1.1rem' }}>➔</span>
-              </Button>
+              <div style={{ textAlign: 'center', marginTop: '0.25rem' }}>
+                <button
+                  type="button"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#64748b',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: '0.35rem 0.5rem',
+                  }}
+                  onClick={() => setIsHistoryModalOpen(true)}
+                >
+                  📜 Movimenti punti ({transactionsCount})
+                </button>
+              </div>
             )}
           </div>
 
@@ -1482,11 +1579,10 @@ export const PublicCardPage: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    {isStaff && cardData.actions?.can_redeem_rewards && (
+                    {isStaff && !scanSessionUsed && cardData.actions?.can_redeem_rewards && canAfford && (
                       <Button
                         variant="secondary"
                         size="sm"
-                        disabled={!canAfford}
                         onClick={() => {
                           setSelectedReward(r);
                         }}

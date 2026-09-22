@@ -37,10 +37,14 @@ export const CampaignsPage: React.FC = () => {
         </div>
       </div>
 
+      <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+        ℹ️ <strong>Funzione futura non configurata:</strong> Il modulo di comunicazioni marketing e campagne automatiche è in fase di predisposizione e non è attualmente abilitato per questo punto vendita. Nessun invio o simulazione viene effettuato.
+      </div>
+
       {campaigns.length === 0 ? (
         <EmptyState
-          title="Nessuna campagna disponibile."
-          description="Non ci sono campagne di comunicazione attive o programmate per questo punto vendita."
+          title="Nessuna campagna programmata"
+          description="Le campagne di comunicazione automatiche saranno disponibili con le prossime estensioni della piattaforma."
         />
       ) : (
         <ul className="space-y-2">

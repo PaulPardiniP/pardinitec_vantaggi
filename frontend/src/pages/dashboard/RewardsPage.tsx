@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { rewardsApi, loyaltyApi, customerApi } from '../../api/services';
+import { rewardsApi, loyaltyApi, customerApi, pointsApi } from '../../api/services';
 import type { Reward, CardProfile, Customer, LoyaltyAccount } from '../../types';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
@@ -18,6 +18,13 @@ export const RewardsPage: React.FC = () => {
   const [profiles, setProfiles] = useState<CardProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Regole di accumulo punti
+  const [programMode, setProgramMode] = useState<'fixed_per_purchase' | 'points_per_amount' | 'manual'>('fixed_per_purchase');
+  const [pointsRatio, setPointsRatio] = useState<number>(1.0);
+  const [fixedPoints, setFixedPoints] = useState<number>(10);
+  const [programDescription, setProgramDescription] = useState('');
+  const [isSavingProgram, setIsSavingProgram] = useState(false);
 
   // Modale Crea / Modifica Premio
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -43,7 +50,7 @@ export const RewardsPage: React.FC = () => {
   const [isRedeeming, setIsRedeeming] = useState(false);
   const [redeemModalError, setRedeemModalError] = useState<string | null>(null);
 
-  const [viewTab, setViewTab] = useState<'catalog' | 'archived'>('catalog');
+  const [viewTab, setViewTab] = useState<'catalog' | 'rules' | 'archived'>('catalog');
   const [archivedRewards, setArchivedRewards] = useState<Reward[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
 
@@ -57,10 +64,20 @@ export const RewardsPage: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      const list = await rewardsApi.list(activeBusiness.id, true, 'punti');
+      const list = await rewardsApi.list(activeBusiness.id, true);
       setRewards(list);
       const profs = await loyaltyApi.listProfiles();
       setProfiles(profs);
+
+      try {
+        const prog = await pointsApi.getProgram(activeBusiness.id);
+        setProgramMode(prog.mode || prog.program_type || 'fixed_per_purchase');
+        setPointsRatio(prog.points_ratio);
+        setFixedPoints(prog.fixed_points);
+        setProgramDescription(prog.description || '');
+      } catch {
+        // fallback
+      }
     } catch {
       setRewards([]);
     } finally {
@@ -72,7 +89,7 @@ export const RewardsPage: React.FC = () => {
     if (!activeBusiness) return;
     setIsLoadingArchived(true);
     try {
-      const list = await rewardsApi.list(activeBusiness.id, false, 'punti', 'archived');
+      const list = await rewardsApi.list(activeBusiness.id, false, undefined, 'archived');
       setArchivedRewards(list);
     } catch {
       setArchivedRewards([]);
@@ -273,6 +290,26 @@ export const RewardsPage: React.FC = () => {
     }
   };
 
+  const handleSaveProgram = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness) return;
+    setIsSavingProgram(true);
+    setFeedback(null);
+    try {
+      await pointsApi.updateProgram(activeBusiness.id, {
+        mode: programMode,
+        points_ratio: Number(pointsRatio),
+        fixed_points: Number(fixedPoints),
+        description: programDescription.trim() || null,
+      });
+      setFeedback({ type: 'success', message: 'Regole di accumulo punti salvate con successo!' });
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Errore durante il salvataggio delle regole punti.' });
+    } finally {
+      setIsSavingProgram(false);
+    }
+  };
+
   const selectedAccount = customerAccounts.find((a) => a.id === selectedAccountId);
   const accountBalance = selectedAccount?.balance ?? 0;
   const isBalanceSufficient = rewardToRedeem ? accountBalance >= rewardToRedeem.points_cost : false;
@@ -295,14 +332,21 @@ export const RewardsPage: React.FC = () => {
 
       {feedback && <Alert type={feedback.type} message={feedback.message} onDismiss={() => setFeedback(null)} />}
 
-      {/* Tabs Viste: Catalogo vs Archiviati */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem' }}>
+      {/* Tabs Viste: Catalogo vs Regole vs Archiviati */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem', flexWrap: 'wrap' }}>
         <button
           type="button"
           className={`btn btn-sm ${viewTab === 'catalog' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setViewTab('catalog')}
         >
           🏆 Premi in catalogo ({rewards.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${viewTab === 'rules' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setViewTab('rules')}
+        >
+          ⚙️ Regole di accumulo punti
         </button>
         <button
           type="button"
@@ -391,6 +435,72 @@ export const RewardsPage: React.FC = () => {
             </table>
           </div>
         )
+      ) : viewTab === 'rules' ? (
+        <div className="card" style={{ maxWidth: '650px' }}>
+          <h2 className="card-title">Regole di Accumulo Punti</h2>
+          <p className="page-subtitle" style={{ marginBottom: '1.25rem' }}>
+            Definisci come i punti vengono calcolati al momento dell'acquisto in cassa.
+          </p>
+
+          <form onSubmit={handleSaveProgram}>
+            <Select
+              label="Modalità di Calcolo Punti *"
+              disabled={!canManage}
+              options={[
+                { label: 'Punti fissi per acquisto (scontrino)', value: 'fixed_per_purchase' },
+                { label: 'Proporzionale alla spesa (€)', value: 'points_per_amount' },
+                { label: 'Manuale (a discrezione dell\'operatore)', value: 'manual' },
+              ]}
+              value={programMode}
+              onChange={(e) => setProgramMode(e.target.value as any)}
+            />
+
+            {programMode === 'points_per_amount' && (
+              <Input
+                label="Ratio Punti per 1 Euro di Spesa *"
+                type="number"
+                step="0.1"
+                min="0.1"
+                disabled={!canManage}
+                value={pointsRatio}
+                onChange={(e) => setPointsRatio(parseFloat(e.target.value) || 1)}
+                helper="es. 1.5 significa 15 punti per 10 euro di spesa."
+              />
+            )}
+
+            {programMode === 'fixed_per_purchase' && (
+              <Input
+                label="Punti Fissi per Ciascun Acquisto *"
+                type="number"
+                min="1"
+                disabled={!canManage}
+                value={fixedPoints}
+                onChange={(e) => setFixedPoints(parseInt(e.target.value, 10) || 10)}
+                helper="Numero di punti assegnati per ciascuna transazione/scontrino."
+              />
+            )}
+
+            <div className="form-group" style={{ marginTop: '1rem' }}>
+              <label className="form-label">Descrizione / Note per Operatori</label>
+              <textarea
+                className="form-control"
+                rows={3}
+                disabled={!canManage}
+                value={programDescription}
+                onChange={(e) => setProgramDescription(e.target.value)}
+                placeholder="Spiega sinteticamente la regola di accumulo ai tuoi operatori..."
+              />
+            </div>
+
+            {canManage && (
+              <div style={{ marginTop: '1.5rem' }}>
+                <Button type="submit" variant="primary" isLoading={isSavingProgram}>
+                  💾 Salva Regole Punti
+                </Button>
+              </div>
+            )}
+          </form>
+        </div>
       ) : (
         isLoadingArchived ? (
           <Spinner size="md" text="Caricamento archivio premi..." />
